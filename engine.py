@@ -2,6 +2,7 @@
 import json, math, threading, os, hashlib
 from pathlib import Path
 import duckdb
+from bootstrap import resolve_index
 
 ROOT = Path(__file__).resolve().parent
 LABELS = {'visible':'可见','possible':'疑似','unrecognized':'未辨认'}
@@ -30,7 +31,7 @@ def matching_tags(review,query):
 
 class Engine:
     def __init__(self, data=None):
-        self.data=Path(data or os.getenv('OSM_DATA_DIR') or ROOT/'data')
+        self.data=resolve_index(Path(data or os.getenv('OSM_DATA_DIR') or ROOT/'data'))
         self.manifest=json.loads((self.data/'manifest.json').read_text())
         if not self.manifest.get('complete') and os.getenv('OSM_ALLOW_PARTIAL')!='1': raise RuntimeError('The full verified index is required')
         for filename,metadata in self.manifest.get('files',{}).items():

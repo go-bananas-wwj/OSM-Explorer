@@ -27,8 +27,12 @@ final result: passed
 
 ## Interaction verification
 
-Chromium/CDP exercised theme selection, query submission, result-row selection, next page, category statistics, sample discoveries and responsive layout. A real Leaflet marker click delivered its image ID through the iframe bridge. A selected source RGB loaded at 384 × 384. No application JavaScript exceptions were observed. Seven query/mapping regression tests and full-index validation passed; see `reports/validation.json`.
+Chromium/CDP exercised theme selection, query submission, result-row selection, next page, category statistics, sample discoveries and responsive layout. A real Leaflet marker click delivered its image ID through the iframe bridge. A selected source RGB loaded at 384 × 384. No application JavaScript exceptions were observed. Eight query/mapping/bootstrap regression tests and full-index validation passed; see `reports/validation.json`.
 
 ## Remaining notes
 
 Real network imagery can load after the metadata; first-page previews are packaged, and other images expose retry actions. Result tables intentionally show real paginated records rather than reproducing the mock's three illustrative rows. No outstanding P0/P1/P2 findings.
+
+## Deployment bootstrap verification
+
+A checkout containing real ModelScope LFS pointers downloaded both public indexes, verified their exact sizes and SHA-256 hashes, and resolved them into the cache in 11.57 seconds. `.lfsconfig` excludes these two large files during build-time smudge; application startup resolves them without a management token. The ordinary GitHub checkout path is unchanged.

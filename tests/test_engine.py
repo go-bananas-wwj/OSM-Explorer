@@ -62,3 +62,10 @@ def test_theme_overlay_does_not_highlight_unrelated_objects():
     assert matching_tags(r,'光伏')==[['generator:source','solar']]
     r={'category':'建筑','tags_json':'[["building","industrial"],["building","residential"]]'}
     assert matching_tags(r,'工业设施')==[['building','industrial']]
+
+def test_bootstrap_ordinary_checkout_is_unchanged(tmp_path):
+    from bootstrap import resolve_index
+    import hashlib
+    content=b'PAR1example';(tmp_path/'images.parquet').write_bytes(content)
+    (tmp_path/'manifest.json').write_text(json.dumps({'files':{'images.parquet':{'bytes':len(content),'sha256':hashlib.sha256(content).hexdigest()}}}))
+    assert resolve_index(tmp_path)==tmp_path

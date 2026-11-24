@@ -72,7 +72,7 @@ python -m pytest -q
 3. 调用 `POST /openapi/v1/studios/{owner}/{repo_name}/deploy` 或在平台点击部署。
 4. 检查构建/运行日志和 `/healthz`；应显示 `complete: true`、`images: 248719`。
 
-应用运行只访问公开数据，不需要把 GitHub 或 ModelScope 管理 token 放入源码、前端或创空间变量。
+应用运行只访问公开数据，不需要把 GitHub 或 ModelScope 管理 token 放入源码、前端或创空间变量。创空间使用 `.lfsconfig` 在构建克隆时跳过索引下载；`bootstrap.py` 在启动时通过公开的 ModelScope LFS 接口获取固定 SHA-256 的索引，并校验大小和哈希后缓存。普通 GitHub 克隆已有完整文件，不触发下载。
 
 ## 来源与许可
 
