@@ -68,7 +68,7 @@ python -m pytest -q
 使用官方 [创空间文档](https://modelscope.cn/docs/studios/intro) 与 [OpenAPI](https://modelscope.cn/.well-known/openapi.json)：
 
 1. 创建 Gradio 创空间，版本 `5.49.1`，免费 CPU `platform/2v-cpu-8g-mem`。
-2. 将此仓库代码和已验证的 `data/` 索引推送到创空间 Git 仓库的 `master` 分支。
+2. 在创空间的独立 Git 工作副本中同步源码，使用 Git LFS 跟踪 `data/*.parquet` 后推送 `master`。ModelScope 限制普通 Git 单文件不超过 10 MiB；GitHub 仓库保留直接可读的索引文件，两端使用相同的数据 SHA-256。不要将 GitHub 的普通大文件提交历史直接推入创空间。
 3. 调用 `POST /openapi/v1/studios/{owner}/{repo_name}/deploy` 或在平台点击部署。
 4. 检查构建/运行日志和 `/healthz`；应显示 `complete: true`、`images: 248719`。
 
