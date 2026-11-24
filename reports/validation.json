@@ -1,0 +1,103 @@
+{
+  "image_count": 248719,
+  "review_count": 555542,
+  "revision": "a3a5fbb34b0eedab262468240d8e5e06f9f24fdc",
+  "checks": [
+    "All index hashes match the manifest",
+    "248719 unique images with valid coordinates",
+    "Default scores descend, unique images, correct verdicts across eight themes",
+    "Full-result map counts equal query counts independently of pagination",
+    "Top source reviews match original categories, verdicts and scores"
+  ],
+  "topics": {
+    "光伏": {
+      "visible_images": 25,
+      "query_seconds": 1.205,
+      "top_scores": [
+        100,
+        98,
+        98,
+        95,
+        95
+      ]
+    },
+    "工业设施": {
+      "visible_images": 4089,
+      "query_seconds": 1.142,
+      "top_scores": [
+        100,
+        100,
+        100,
+        100,
+        100
+      ]
+    },
+    "农田": {
+      "visible_images": 7458,
+      "query_seconds": 1.139,
+      "top_scores": [
+        100,
+        100,
+        100,
+        100,
+        100
+      ]
+    },
+    "水域": {
+      "visible_images": 33007,
+      "query_seconds": 1.149,
+      "top_scores": [
+        100,
+        100,
+        100,
+        100,
+        100
+      ]
+    },
+    "风电": {
+      "visible_images": 12,
+      "query_seconds": 1.127,
+      "top_scores": [
+        95,
+        95,
+        95,
+        95,
+        95
+      ]
+    },
+    "机场": {
+      "visible_images": 504,
+      "query_seconds": 1.059,
+      "top_scores": [
+        100,
+        100,
+        98,
+        98,
+        98
+      ]
+    },
+    "港口": {
+      "visible_images": 4,
+      "query_seconds": 1.167,
+      "top_scores": [
+        95,
+        95,
+        90,
+        90
+      ]
+    },
+    "矿场": {
+      "visible_images": 763,
+      "query_seconds": 1.085,
+      "top_scores": [
+        98,
+        95,
+        95,
+        95,
+        95
+      ]
+    }
+  },
+  "elapsed_seconds": 18.44,
+  "passed": true
+}

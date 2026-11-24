@@ -1,0 +1,12 @@
+OSM Explorer
+Copyright 2026 Weijie Wu
+
+UI structure inspired by EarthEmbeddingExplorer (Apache-2.0):
+https://modelscope.cn/studios/Major-TOM/EarthEmbeddingExplorer-Dense-Qwen3-VL-Embedding
+Reference revision: 66f13e0a400ce1c2347d061ae4024d7349701933
+
+Vendored Leaflet files: Copyright Vladimir Agafonkin and contributors, BSD-2-Clause.
+See static/LEAFLET-LICENSE.
+Natural Earth coastlines and ocean geometry: public domain, https://www.naturalearthdata.com/
+
+Data and imagery retain separate upstream licenses as documented in README.md.

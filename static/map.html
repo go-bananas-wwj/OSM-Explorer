@@ -1,0 +1,41 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/osm-static/leaflet.css"><style>
+html,body,#map{height:100%;margin:0;font-family:system-ui,sans-serif}#map{background:#f3f4f5}.badge{position:absolute;z-index:900;bottom:24px;left:10px;background:#fffffff0;border-radius:4px;padding:8px 10px;font-size:12px;color:#423252;max-width:75%}.legend{position:absolute;z-index:900;right:10px;top:88px;background:#fffffff0;padding:8px;font-size:12px;border-radius:4px}.bar{height:6px;background:linear-gradient(90deg,#a99ad1,#eab080);margin:6px 0}.popup{font-size:13px;max-width:240px}.popup img{width:210px;height:210px;object-fit:contain;display:block;margin:6px 0}.popup button{background:#9851ed;color:white;border:0;border-radius:4px;padding:7px 12px;cursor:pointer}.map-action{position:absolute;z-index:900;left:10px;top:85px;font-size:12px;background:#fff;border:1px solid #ccc;padding:6px;border-radius:4px;cursor:pointer}.leaflet-popup-content{margin:12px}
+</style></head><body><div id="map" aria-label="数据集样本全球分布地图"></div><button id="global" class="map-action">全球</button><div class="badge" id="status" role="status">正在读取分布…</div><div class="legend">每格影像数<div class="bar"></div>少 ↔ 多</div><script src="/osm-static/leaflet.js"></script><script>
+const query=new URLSearchParams(location.search).get('query')||'';
+const map=L.map('map',{preferCanvas:true,worldCopyJump:true,minZoom:1,maxZoom:17,zoomSnap:0.01}).fitBounds([[-60,-180],[80,180]],{animate:false,padding:[2,2]});
+const terrain=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',{maxZoom:17,attribution:'Tiles © Esri'}).addTo(map);
+const satellite=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:17,attribution:'Tiles © Esri'});
+L.control.layers({'Terrain · Esri':terrain,'Satellite · Esri':satellite},null,{collapsed:false}).addTo(map);
+const land=L.layerGroup().addTo(map);const points=L.layerGroup().addTo(map);const outlines=L.layerGroup().addTo(map);
+Promise.all([fetch('/osm-static/ocean-110m.geojson').then(r=>r.json()),fetch('/osm-static/coastlines-110m.geojson').then(r=>r.json())]).then(([o,c])=>{L.geoJSON(o,{interactive:false,style:{stroke:false,fillColor:'#79b8d7',fillOpacity:.45}}).addTo(land);L.geoJSON(c,{interactive:false,style:{color:'#43789a',weight:1,opacity:.8}}).addTo(land);refresh();}).catch(()=>{});
+map.on('baselayerchange',()=>{if(map.hasLayer(terrain))land.addTo(map);else map.removeLayer(land)});
+let controller,timer;const status=document.getElementById('status');
+function send(type,data){parent.postMessage({source:'osm-explorer',type,...data},location.origin)}
+function bounds(){const b=map.getBounds();return {west:b.getWest(),south:b.getSouth(),east:b.getEast(),north:b.getNorth(),zoom:map.getZoom()}}
+async function popup(p){
+ const box=document.createElement('div');box.className='popup';
+ const t=document.createElement('div');t.textContent=p.image_id;box.appendChild(t);
+ const text=document.createElement('div');text.textContent='经纬度 '+p.lon.toFixed(4)+', '+p.lat.toFixed(4)+(p.score==null?'':' · 自评分 '+p.score);box.appendChild(text);
+ const im=document.createElement('img');im.alt='原始 Sentinel-2 RGB';im.src='/api/image/'+encodeURIComponent(p.image_id);im.onerror=()=>{im.remove();const msg=document.createElement('p');msg.textContent='影像暂未加载，可在下方详情中重试';box.appendChild(msg)};box.appendChild(im);
+ const btn=document.createElement('button');btn.textContent='查看影像与标签';btn.onclick=()=>send('select',{image_id:p.image_id,candidate_id:p.candidate_id});box.appendChild(btn);
+ L.popup().setLatLng([p.lat,p.lon]).setContent(box).openOn(map);
+ send('select',{image_id:p.image_id,candidate_id:p.candidate_id});
+ try{const r=await fetch('/api/footprint/'+encodeURIComponent(p.image_id));if(!r.ok)return;outlines.clearLayers();L.geoJSON(await r.json(),{style:{color:'#9452e8',weight:2,fillOpacity:.04}}).addTo(outlines)}catch(e){}
+}
+async function cellPopup(p,step){
+ const box=document.createElement('div');box.className='popup';box.textContent='此位置 '+p.n+' 张影像，正在读取…';
+ L.popup().setLatLng([p.lat,p.lon]).setContent(box).openOn(map);
+ try{const r=await fetch('/api/cell?'+new URLSearchParams({query,gx:p.gx,gy:p.gy,step}));if(!r.ok)throw Error();const rows=await r.json();box.textContent='此位置 '+p.n+' 张影像（最高分前 '+rows.length+' 张）';for(const row of rows){const line=document.createElement('div');const btn=document.createElement('button');btn.style.marginTop='6px';btn.textContent=row.year+' · '+(row.score??'—')+' 分 · '+row.image_id.slice(0,10);btn.onclick=()=>popup(row);line.appendChild(btn);box.appendChild(line)}}catch(e){box.textContent='读取失败，请重试'}
+}
+async function refresh(){
+ clearTimeout(timer);if(controller)controller.abort();controller=new AbortController();const b=bounds();send('bounds',{bounds:b});
+ try{status.textContent='正在更新分布…';const r=await fetch('/api/map?'+new URLSearchParams({...b,query}),{signal:controller.signal});if(!r.ok)throw Error(await r.text());const data=await r.json();points.clearLayers();
+ const max=Math.max(1,...data.points.map(p=>p.n));
+ for(const p of data.points){const ratio=Math.log1p(p.n)/Math.log1p(max);const color=ratio>.65?'#e5a877':'#9c85c1';const marker=L.circleMarker([p.lat,p.lon],{radius:p.n===1?4:Math.min(15,5+Math.log2(p.n)*1.4),weight:0,fillColor:color,fillOpacity:.78}).addTo(points);marker.bindTooltip(p.n.toLocaleString()+' 张影像'+(p.n===1&&p.score!=null?' · 自评分 '+p.score:''));marker.on('click',()=>{if(p.image_id)popup(p);else if(map.getZoom()>=16)cellPopup(p,data.cell_degrees);else map.setView([p.lat,p.lon],Math.min(17,map.getZoom()+2))})}
+ status.textContent='当前视野 '+data.count.toLocaleString()+' 张影像 · '+(data.coverage?'全部覆盖':'全部匹配结果')+' · '+data.cell_degrees.toFixed(3)+'° 聚合网格';
+ }catch(e){if(e.name!=='AbortError')status.textContent='地图查询失败，请缩放或点击全球重试'}
+}
+map.on('moveend',()=>{clearTimeout(timer);timer=setTimeout(refresh,180)});document.getElementById('global').onclick=()=>{map.fitBounds([[-60,-180],[80,180]],{animate:false,padding:[2,2]});refresh()};
+window.addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==parent||e.data?.type!=='focus')return;map.setView([e.data.lat,e.data.lon],10);popup(e.data)});
+refresh();
+</script></body></html>

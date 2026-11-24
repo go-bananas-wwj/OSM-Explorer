@@ -1,0 +1,37 @@
+{
+  "dataset": "WeijieWu/EEE-benchmark-OSM-249K-AI-Filtered-v2",
+  "revision": "a3a5fbb34b0eedab262468240d8e5e06f9f24fdc",
+  "image_count": 248719,
+  "review_count": 555542,
+  "shards": 491,
+  "complete": true,
+  "years": [
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "statuses": {
+    "no_candidates": 111938,
+    "no_rgb_signal": 1500,
+    "complete": 135281
+  },
+  "manifest_sha256": "dd5ef40716b8d571651654db121502d9e824af8d4ab0da4875d58672068237dd",
+  "built_at": "2026-11-24T12:47:31Z",
+  "files": {
+    "images.parquet": {
+      "bytes": 35840246,
+      "sha256": "3645460691094cdc2e8d23bde2387a824b997e0861397378225f80fc5793b034"
+    },
+    "reviews.parquet": {
+      "bytes": 18579709,
+      "sha256": "244889dc8a94624b79413852e3e7a0e6ebc88a37e4d23b45357d83dd6590d03e"
+    }
+  },
+  "theme_mapping": "Same-object solar/wind qualifiers linked through reviewed power tag; original AI category and score unchanged."
+}

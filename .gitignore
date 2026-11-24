@@ -1,0 +1,8 @@
+.venv/
+work/
+reference-earth-explorer/
+__pycache__/
+.pytest_cache/
+.cache/
+*.log
+.env*
