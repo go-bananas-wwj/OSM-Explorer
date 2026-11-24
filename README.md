@@ -11,6 +11,8 @@ license: apache-2.0
 
 [在线创空间](https://modelscope.cn/studios/WeijieWu/OSM-Explorer) · [GitHub](https://github.com/go-bananas-wwj/OSM-Explorer)
 
+![OSM Explorer 在线界面](docs/screenshot.png)
+
 ## 使用
 
 左侧选择光伏、工业设施等主题，或输入原始类别、`key=value` 标签。选择 AI 判读、年份和分数下限后点击查询。结果默认按 **自评分降序**，同分按影像 ID 保持稳定顺序。
@@ -67,7 +69,7 @@ python -m pytest -q
 
 使用官方 [创空间文档](https://modelscope.cn/docs/studios/intro) 与 [OpenAPI](https://modelscope.cn/.well-known/openapi.json)：
 
-1. 创建 Gradio 创空间，版本 `5.49.1`，免费 CPU `platform/2v-cpu-8g-mem`。
+1. 创建 Gradio 创空间，版本 `5.49.1`，免费 CPU `platform/2v-cpu-8g-mem`，基础环境 `ubuntu22.04-py310-torch2.3.1-modelscope1.21.0`。
 2. 在创空间的独立 Git 工作副本中同步源码，使用 Git LFS 跟踪 `data/*.parquet` 后推送 `master`。ModelScope 限制普通 Git 单文件不超过 10 MiB；GitHub 仓库保留直接可读的索引文件，两端使用相同的数据 SHA-256。不要将 GitHub 的普通大文件提交历史直接推入创空间。
 3. 调用 `POST /openapi/v1/studios/{owner}/{repo_name}/deploy` 或在平台点击部署。
 4. 检查构建/运行日志和 `/healthz`；应显示 `complete: true`、`images: 248719`。

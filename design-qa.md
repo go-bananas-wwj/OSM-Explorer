@@ -36,3 +36,7 @@ Real network imagery can load after the metadata; first-page previews are packag
 ## Deployment bootstrap verification
 
 A checkout containing real ModelScope LFS pointers downloaded both public indexes, verified their exact sizes and SHA-256 hashes, and resolved them into the cache in 11.57 seconds. `.lfsconfig` excludes these two large files during build-time smudge; application startup resolves them without a management token. The ordinary GitHub checkout path is unchanged.
+
+## Live deployment verification
+
+The ModelScope Studio reached Running on the free 2-vCPU / 8-GB CPU tier. The browser-rendered production page is captured in `docs/screenshot.png`. Authenticated application API checks confirmed the complete 248719-image / 555542-review index, 25 solar-visible results in descending score order, matching full-map counts and a real 384 × 384 source preview. See `reports/online-validation.json`.

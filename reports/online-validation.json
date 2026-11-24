@@ -1,0 +1,29 @@
+{
+  "health": {
+    "status": "ready",
+    "images": 248719,
+    "reviews": 555542,
+    "complete": true,
+    "revision": "a3a5fbb34b0eedab262468240d8e5e06f9f24fdc"
+  },
+  "solar_visible_count": 25,
+  "top_scores": [
+    100,
+    98,
+    98,
+    95,
+    95
+  ],
+  "map_count": 25,
+  "preview_image_id": "2b0d8e25fcf8ff93b1ea",
+  "preview_bytes": 243171,
+  "verified_at": "2026-11-24T14:22:35Z",
+  "passed": true,
+  "industrial_visible_count": 4089,
+  "industrial_map_count": 4089,
+  "industrial_csv_rows": 4089,
+  "base_image": "ubuntu22.04-py310-torch2.3.1-modelscope1.21.0",
+  "hardware": "platform/2v-cpu-8g-mem",
+  "studio_url": "https://modelscope.cn/studios/WeijieWu/OSM-Explorer",
+  "github_url": "https://github.com/go-bananas-wwj/OSM-Explorer"
+}
