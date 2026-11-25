@@ -66,3 +66,22 @@ def test_discovery_tab_initial_state_and_return_navigation(monkeypatch,global_en
     state={'mode':'类别丰富','category':'全部类别','score':0,'page':2}
     assert app.discovery_tab_open('类别丰富','全部类别',0,state)[1]['page']==2
     assert app.discovery_tab_open('稀有类别','全部类别',0,state)[1]['page']==1
+
+def test_bundled_indexes_boot_without_network(tmp_path,monkeypatch):
+    import hashlib
+    from bootstrap import resolve_index
+    from scripts.prepare_studio_index import make_bundle
+    data=tmp_path/'data';data.mkdir();raw=b'PAR1'+bytes(range(256))*30
+    (data/'reviews.parquet').write_bytes(raw)
+    manifest={'files':{'reviews.parquet':{'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}}}
+    (data/'manifest.json').write_text(json.dumps(manifest))
+    make_bundle(data,data/'index-chunks',part_size=1000)
+    (data/'reviews.parquet').write_bytes(b'version https://git-lfs.github.com/spec/v1\n')
+    monkeypatch.setenv('OSM_CACHE_DIR',str(tmp_path/'cache'))
+    import bootstrap
+    monkeypatch.setattr(bootstrap.requests,'post',lambda *a,**k:pytest.fail('Network must not be used'))
+    resolved=resolve_index(data);assert (resolved/'reviews.parquet').read_bytes()==raw
+    # Corrupted bundle must fail rather than silently serve the wrong index.
+    monkeypatch.setenv('OSM_CACHE_DIR',str(tmp_path/'second-cache'))
+    (data/'index-chunks/reviews-0000.part').write_bytes(b'bad')
+    with pytest.raises(RuntimeError,match='checksum'):resolve_index(data)

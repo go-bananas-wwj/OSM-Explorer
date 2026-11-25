@@ -1,4 +1,4 @@
-"""Resolve LFS pointers at runtime, avoiding large-file smudge in Studio builds."""
+"""Resolve bundled index parts locally, with public LFS as a legacy fallback."""
 import concurrent.futures
 import hashlib
 import json
@@ -13,6 +13,30 @@ LFS_ENDPOINT='https://modelscope.cn/studios/WeijieWu/OSM-Explorer.git/info/lfs/o
 
 def verified(path,meta):
     return path.exists() and path.stat().st_size==meta['bytes'] and hashlib.sha256(path.read_bytes()).hexdigest()==meta['sha256']
+
+def assemble_bundle(data_dir,cache,files,missing):
+    directory=data_dir/'index-chunks';path=directory/'manifest.json'
+    if not path.exists():return missing
+    bundle=json.loads(path.read_text())['files']
+    for name in missing:
+        meta=files[name];entry=bundle.get(name)
+        if not entry or entry['sha256']!=meta['sha256'] or entry['bytes']!=meta['bytes']:raise RuntimeError('Bundled index version mismatch: '+name)
+        destination=cache/name;temp=destination.with_suffix('.'+uuid.uuid4().hex+'.tmp');digest=hashlib.sha256();size=0
+        print('Assembling bundled index:',name,flush=True)
+        try:
+            with temp.open('wb') as out:
+                for part in entry['parts']:
+                    source=directory/part['name']
+                    if source.parent.resolve()!=directory.resolve():raise RuntimeError('Invalid index part path')
+                    part_hash=hashlib.sha256();part_size=0
+                    with source.open('rb') as f:
+                        while data:=f.read(1024*1024):
+                            out.write(data);digest.update(data);part_hash.update(data);part_size+=len(data);size+=len(data)
+                    if part_size!=part['bytes'] or part_hash.hexdigest()!=part['sha256']:raise RuntimeError('Index part checksum mismatch: '+part['name'])
+            if size!=meta['bytes'] or digest.hexdigest()!=meta['sha256']:raise RuntimeError('Bundled index checksum mismatch: '+name)
+            temp.replace(destination)
+        finally:temp.unlink(missing_ok=True)
+    return []
 
 def resolve_index(data_dir):
     data_dir=Path(data_dir);manifest=json.loads((data_dir/'manifest.json').read_text())
@@ -33,6 +57,7 @@ def resolve_index(data_dir):
         if verified(cache/name,meta):continue
         if verified(data_dir/name,meta):shutil.copyfile(data_dir/name,cache/name)
         else:missing.append(name)
+    missing=assemble_bundle(data_dir,cache,files,missing)
     if missing:
         objects=[{'oid':files[name]['sha256'],'size':files[name]['bytes']} for name in missing]
         r=requests.post(LFS_ENDPOINT,json={'operation':'download','transfers':['basic'],'objects':objects},headers={'Accept':'application/vnd.git-lfs+json','Content-Type':'application/vnd.git-lfs+json'},timeout=(10,30));r.raise_for_status()

@@ -85,10 +85,11 @@ python -m pytest -q
 
 1. 创建 Gradio 创空间，版本 `5.49.1`，免费 CPU `platform/2v-cpu-8g-mem`，基础环境 `ubuntu22.04-py310-torch2.3.1-modelscope1.21.0`。
 2. 在创空间的独立 Git 工作副本中同步源码，使用 Git LFS 跟踪 `data/*.parquet` 后推送 `master`。ModelScope 限制普通 Git 单文件不超过 10 MiB；GitHub 仓库保留直接可读的索引文件，两端使用相同的数据 SHA-256。不要将 GitHub 的普通大文件提交历史直接推入创空间。
-3. 调用 `POST /openapi/v1/studios/{owner}/{repo_name}/deploy` 或在平台点击部署。
-4. 检查构建/运行日志和 `/healthz`；应显示 `complete: true`、`images: 248719`。
+3. 在推送前执行 `python scripts/prepare_studio_index.py --output <创空间工作副本>/data/index-chunks`，将分片作为普通 Git 文件一并提交。
+4. 调用 `POST /openapi/v1/studios/{owner}/{repo_name}/deploy` 或在平台点击部署。
+5. 检查构建/运行日志和 `/healthz`；应显示 `complete: true`、`images: 248719`。
 
-应用运行只访问公开数据，不需要把 GitHub 或 ModelScope 管理 token 放入源码、前端或创空间变量。创空间使用 `.lfsconfig` 在构建克隆时跳过索引下载；`bootstrap.py` 在启动时通过公开的 ModelScope LFS 接口获取固定 SHA-256 的索引，并校验大小和哈希后缓存。普通 GitHub 克隆已有完整文件，不触发下载。
+应用运行只访问公开数据，不需要把 GitHub 或 ModelScope 管理 token 放入源码、前端或创空间变量。创空间使用 `.lfsconfig` 跳过构建时的 LFS 下载，并将 `scripts/prepare_studio_index.py` 生成的索引分片放在 `data/index-chunks/`（每片不超过 8 MiB）。`bootstrap.py` 启动时在本地合并，逐片和整文件验证 SHA-256，不依赖网络下载索引。普通 GitHub 克隆已有完整文件，无需合并。缺少分片的旧部署仍可回退到公开 LFS 接口。
 
 ## 来源与许可
 
