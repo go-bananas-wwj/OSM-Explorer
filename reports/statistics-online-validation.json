@@ -1,0 +1,30 @@
+{
+  "passed": true,
+  "dataset": "WeijieWu/EEE-benchmark-OSM-249K-AI-Filtered-v2",
+  "revision": "a3a5fbb34b0eedab262468240d8e5e06f9f24fdc",
+  "image_denominator": 248719,
+  "visible": {
+    "records": 252083,
+    "images": 111329,
+    "categories": 523,
+    "image_pct": 44.760955134107164
+  },
+  "road_visible": {
+    "category": "道路",
+    "records": 44362,
+    "images": 44362,
+    "object_rows": 2025591,
+    "image_pct": 17.836192651144465
+  },
+  "road_all": {
+    "category": "道路",
+    "records": 59179,
+    "images": 59179,
+    "object_rows": 2342971,
+    "image_pct": 23.79351798616109
+  },
+  "statistics_csv_verified": true,
+  "discovery_gallery_size": 12,
+  "discovery_candidate_preserved": true,
+  "verified_at": "2026-11-25T08:25:56Z"
+}
