@@ -44,3 +44,5 @@ The ModelScope Studio reached Running on the free 2-vCPU / 8-GB CPU tier. The br
 ## 2026-11-25 mask and preview update
 
 Browser verification at 1440 × 1100 confirmed ten previews, then complete preview-section hiding for a four-result query. Selecting the reported sample 2816821a4079c7348a1a renders both full-image and local-zoom panels, using 345 original mask pixels and an 80 × 80 source-pixel crop. Multiple-object selection defaults to the largest foreground mask. Tests cover exact pixel support and holes, edge-clamped crops, no-mask view, object switching and 0/1/9/10-result boundaries. Evidence: work/mask-pair-ui.png, work/check-mask-ui.log. No JavaScript exceptions observed.
+
+Production verification for the 2026-11-25 update passed: ten previews load; the four-result query returns no preview content; full-image and zoom PNGs match the locally rendered original mask pixel-for-pixel. The reported sample uses 345 original foreground pixels and an 80 × 80 source-pixel crop. All 13 regression tests passed. See `reports/mask-update-validation.json`.
