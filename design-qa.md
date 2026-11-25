@@ -40,3 +40,7 @@ A checkout containing real ModelScope LFS pointers downloaded both public indexe
 ## Live deployment verification
 
 The ModelScope Studio reached Running on the free 2-vCPU / 8-GB CPU tier. The browser-rendered production page is captured in `docs/screenshot.png`. Authenticated application API checks confirmed the complete 248719-image / 555542-review index, 25 solar-visible results in descending score order, matching full-map counts and a real 384 × 384 source preview. See `reports/online-validation.json`.
+
+## 2026-11-25 mask and preview update
+
+Browser verification at 1440 × 1100 confirmed ten previews, then complete preview-section hiding for a four-result query. Selecting the reported sample 2816821a4079c7348a1a renders both full-image and local-zoom panels, using 345 original mask pixels and an 80 × 80 source-pixel crop. Multiple-object selection defaults to the largest foreground mask. Tests cover exact pixel support and holes, edge-clamped crops, no-mask view, object switching and 0/1/9/10-result boundaries. Evidence: work/mask-pair-ui.png, work/check-mask-ui.log. No JavaScript exceptions observed.

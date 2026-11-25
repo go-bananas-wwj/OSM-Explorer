@@ -418,5 +418,53 @@
     "capture_time": "2023-03-02T02:46:31Z",
     "license": "CC BY-SA 4.0",
     "attribution": "Copernicus Sentinel-2 / Major-TOM"
+  },
+  {
+    "image_id": "9849d3939f1d0184e890",
+    "source": {
+      "dataset": "Major-TOM/Core-S2L2A-249k",
+      "revision": "895d869aadcfd25565cd18a3da22963ca582e54e",
+      "file": "images_249k/part_00278.parquet",
+      "row_group": 303
+    },
+    "capture_time": "2021-05-17T04:47:01Z",
+    "license": "CC BY-SA 4.0",
+    "attribution": "Copernicus Sentinel-2 / Major-TOM"
+  },
+  {
+    "image_id": "f1ec4f2f07b056294a9c",
+    "source": {
+      "dataset": "Major-TOM/Core-S2L2A-249k",
+      "revision": "895d869aadcfd25565cd18a3da22963ca582e54e",
+      "file": "images_249k/part_00338.parquet",
+      "row_group": 261
+    },
+    "capture_time": "2022-10-23T03:38:09Z",
+    "license": "CC BY-SA 4.0",
+    "attribution": "Copernicus Sentinel-2 / Major-TOM"
+  },
+  {
+    "image_id": "1b1ee1b3d0534ab50d76",
+    "source": {
+      "dataset": "Major-TOM/Core-S2L2A-249k",
+      "revision": "895d869aadcfd25565cd18a3da22963ca582e54e",
+      "file": "images_249k/part_00222.parquet",
+      "row_group": 215
+    },
+    "capture_time": "2022-03-31T04:56:59Z",
+    "license": "CC BY-SA 4.0",
+    "attribution": "Copernicus Sentinel-2 / Major-TOM"
+  },
+  {
+    "image_id": "212137241caa05811934",
+    "source": {
+      "dataset": "Major-TOM/Core-S2L2A-249k",
+      "revision": "895d869aadcfd25565cd18a3da22963ca582e54e",
+      "file": "images_249k/part_00371.parquet",
+      "row_group": 152
+    },
+    "capture_time": "2023-03-25T05:26:49Z",
+    "license": "CC BY-SA 4.0",
+    "attribution": "Copernicus Sentinel-2 / Major-TOM"
   }
 ]

@@ -1,5 +1,5 @@
 """Fetch only selected Parquet row groups; render the same RGB recipe used by the AI."""
-import io, json, os, threading, hashlib, uuid, time
+import io, json, os, threading, hashlib, uuid, time, zipfile
 from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import quote
@@ -8,8 +8,6 @@ import numpy as np
 import pyarrow.parquet as pq
 from PIL import Image, ImageDraw
 from shapely import wkb
-from shapely.ops import transform as transform_geometry
-from pyproj import Transformer
 
 ROOT=Path(__file__).resolve().parent
 CACHE=Path(os.getenv('OSM_CACHE_DIR',str(ROOT/'.cache')))
@@ -116,28 +114,106 @@ def annotations(row):
     tmp=cache.with_suffix('.'+uuid.uuid4().hex+'.tmp');tmp.write_text(json.dumps(result,ensure_ascii=False));tmp.replace(cache)
     return result
 
-def overlay(row,tags):
-    """Draw matching ORIGINAL OSM geometries, not an AI localization mask."""
-    path=rgb(row);im=Image.open(path).convert('RGB');draw=ImageDraw.Draw(im)
-    info=json.loads(row['info_json']);a,b,c,d,e,f=info['transform'];det=a*e-b*d
-    project=Transformer.from_crs('EPSG:4326',info['crs'],always_xy=True)
-    def pixel(x,y):
-        x,y=project.transform(x,y);x-=c;y-=f
-        return ((e*x-b*y)/det,(-d*x+a*y)/det)
-    wanted=set(tuple(t) for t in tags);count=0
-    def draw_geom(g):
-        typ=g['type'];co=g.get('coordinates')
-        if typ=='Polygon':
-            for ring in co:draw.line([pixel(*xy[:2]) for xy in ring],fill='#ffaa20',width=2)
-        elif typ=='LineString':draw.line([pixel(*xy[:2]) for xy in co],fill='#ffaa20',width=2)
-        elif typ=='Point':
-            x,y=pixel(*co[:2]);draw.ellipse((x-3,y-3,x+3,y+3),outline='#ffaa20',width=2)
-        elif typ.startswith('Multi'):
-            for part in co:draw_geom({'type':typ[5:],'coordinates':part})
-        elif typ=='GeometryCollection':
-            for part in g['geometries']:draw_geom(part)
+def union_saved_masks(blob, indices, expected_shape, capture=None):
+    """Read selected original mask planes without expanding the full N×H×W array."""
+    union=np.zeros(expected_shape,dtype=bool)
+    if not indices:return union
+    with zipfile.ZipFile(io.BytesIO(blob)) as archive, archive.open('masks.npy') as stream:
+        version=np.lib.format.read_magic(stream)
+        shape,fortran,dtype=np.lib.format._read_array_header(stream,version)
+        if fortran or len(shape)!=3 or tuple(shape[1:])!=tuple(expected_shape) or dtype!=np.dtype('uint8'):
+            raise ValueError('Unexpected original mask layout')
+        plane_bytes=int(np.prod(shape[1:]));position=0
+        for index in sorted(set(indices)):
+            if not 0<=index<shape[0]:raise ValueError('Mask index outside original array')
+            skip=index*plane_bytes-position
+            while skip:
+                chunk=stream.read(min(skip,1024*1024))
+                if not chunk:raise ValueError('Truncated mask array')
+                skip-=len(chunk);position+=len(chunk)
+            data=stream.read(plane_bytes)
+            if len(data)!=plane_bytes:raise ValueError('Truncated mask plane')
+            plane=np.frombuffer(data,dtype=np.uint8).reshape(expected_shape)>0
+            union|=plane
+            if capture is not None and index in capture:capture[index]=plane.copy()
+            position+=plane_bytes
+    return union
+
+def mask_cache_path(row,tags,object_key=None):
+    key=hashlib.sha256(json.dumps([sorted(set(tuple(t) for t in tags)),object_key],ensure_ascii=False).encode()).hexdigest()[:16]
+    return CACHE/(row['image_id']+'.mask-v2-'+key+'.npz')
+
+def save_mask(path,mask,objects):
+    temp=path.with_suffix('.'+uuid.uuid4().hex+'.tmp')
+    with temp.open('wb') as f:np.savez_compressed(f,mask=mask,objects=json.dumps(objects,ensure_ascii=False))
+    temp.replace(path)
+
+def original_mask(row,tags,object_key=None):
+    wanted=set(tuple(t) for t in tags)
+    path=mask_cache_path(row,tags,object_key)
+    if path.exists():
+        with np.load(path,allow_pickle=False) as saved:
+            return saved['mask'].astype(bool),json.loads(str(saved['objects']))
+    local=ROOT/'work'/'raw'/row['shard']
+    stream=local.open('rb') if local.exists() else HTTPRangeFile(dataset_url(DATASET,REVISION,row['shard']))
+    with FETCH_LIMIT,stream:
+        pf=pq.ParquetFile(stream);index=int(row['physical_row']);rg=0
+        while index>=pf.metadata.row_group(rg).num_rows:index-=pf.metadata.row_group(rg).num_rows;rg+=1
+        record=pf.read_row_group(rg,columns=['image_id','osm_annotations.list.element.tags','osm_annotations.list.element.mask_index','osm_annotations.list.element.object_key','osm_annotations.list.element.osm_type','osm_annotations.list.element.osm_id','osm_annotations.list.element.foreground_pixels','masks_npz']).slice(index,1).to_pylist()[0]
+    if record['image_id']!=row['image_id']:raise ValueError('Mask source identity mismatch')
     matching=[]
-    for obj in annotations(row):
-        if wanted.intersection(obj['tags'].items()):
-            draw_geom(obj['geometry']);count+=1;matching.append(obj)
-    return im,count,matching
+    for obj in record['osm_annotations']:
+        if wanted.intersection(dict(obj['tags']).items()) and (object_key is None or obj['object_key']==object_key):
+            matching.append(dict(osm_type=obj['osm_type'],osm_id=obj['osm_id'],object_key=obj['object_key'],mask_index=obj['mask_index'],foreground_pixels=obj['foreground_pixels'],tags=dict(obj['tags'])))
+    info=json.loads(row['info_json'])
+    largest=max(matching,key=lambda o:o['foreground_pixels'],default=None)
+    capture={largest['mask_index']:None} if largest and object_key is None else {}
+    mask=union_saved_masks(record['masks_npz'],[o['mask_index'] for o in matching],(info['height'],info['width']),capture)
+    save_mask(path,mask,matching)
+    if largest and capture:
+        save_mask(mask_cache_path(row,tags,largest['object_key']),capture[largest['mask_index']],[largest])
+    return mask,matching
+
+def render_mask(image,mask):
+    """Tint original foreground pixels, preserving holes and untouched background."""
+    original=np.asarray(image.convert('RGB'))
+    if original.shape[:2]!=mask.shape:raise ValueError('RGB/mask shape mismatch')
+    result=original.copy()
+    result[mask]=np.round(original[mask]*0.50+np.array([255,45,170])*0.50).astype(np.uint8)
+    padded=np.pad(mask,1,constant_values=False)
+    interior=(padded[1:-1,:-2]&padded[1:-1,2:]&padded[:-2,1:-1]&padded[2:,1:-1])
+    result[mask&~interior]=[255,45,170]
+    return Image.fromarray(result)
+
+def overlay(row,tags):
+    """Overlay the dataset's masks_npz planes selected by original mask_index."""
+    image=Image.open(rgb(row)).convert('RGB')
+    mask,matching=original_mask(row,tags)
+    return render_mask(image,mask),len(matching),matching
+
+
+def mask_crop_box(mask):
+    ys,xs=np.where(mask)
+    if not len(xs):return None
+    h,w=mask.shape;extent=max(int(xs.max()-xs.min()+1),int(ys.max()-ys.min()+1))
+    side=max(32,extent+2*max(6,int(np.ceil(extent*.2))))
+    cw,ch=min(w,side),min(h,side)
+    x=max(0,min(w-cw,(int(xs.min())+int(xs.max())+1-cw)//2))
+    y=max(0,min(h-ch,(int(ys.min())+int(ys.max())+1-ch)//2))
+    return (x,y,x+cw,y+ch)
+
+def mask_views(row,tags,show_mask=True,object_key=None):
+    image=Image.open(rgb(row)).convert('RGB')
+    union,objects=original_mask(row,tags)
+    objects=sorted(objects,key=lambda o:(-o['foreground_pixels'],o['object_key']))
+    chosen=next((o for o in objects if o['object_key']==object_key),objects[0] if objects else None)
+    full=render_mask(image,union) if show_mask else image.copy()
+    if chosen is None:return full,None,objects,None,None,int(union.sum())
+    mask,_=original_mask(row,tags,chosen['object_key'])
+    box=mask_crop_box(mask)
+    if box is None:return full,None,objects,chosen,None,int(union.sum())
+    zoom=(render_mask(image,mask) if show_mask else image).crop(box)
+    scale=384/max(zoom.size)
+    zoom=zoom.resize((round(zoom.width*scale),round(zoom.height*scale)),Image.Resampling.NEAREST)
+    ImageDraw.Draw(full).rectangle((box[0],box[1],box[2]-1,box[3]-1),outline='#00c9eb',width=2)
+    return full,zoom,objects,chosen,box,int(union.sum())

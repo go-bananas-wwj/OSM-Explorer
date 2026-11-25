@@ -6,11 +6,11 @@ from engine import Engine,ROOT,THEMES
 from imagery import rgb
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--topics',nargs='*');args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--topics',nargs='*');p.add_argument('--limit',type=int,default=10);args=p.parse_args()
     engine=Engine();dest=ROOT/'data/previews';dest.mkdir(exist_ok=True)
     rows={}
     for topic in (args.topics or THEMES):
-        _,found=engine.search({'query':topic,'verdict':'visible'},limit=4)
+        _,found=engine.search({'query':topic,'verdict':'visible'},limit=args.limit)
         for r in found:rows[r['image_id']]=engine.image(r['image_id'])
     def work(row):
         try:

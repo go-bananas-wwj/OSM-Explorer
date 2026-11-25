@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from shapely import wkb
 from engine import Engine, LABELS, THEMES, ROOT, matching_tags
-from imagery import rgb, overlay, CACHE
+from imagery import rgb, mask_views, CACHE
 
 engine=Engine(); api=FastAPI(title='OSM Explorer')
 api.mount('/osm-static',StaticFiles(directory=ROOT/'static'),name='static')
@@ -96,12 +96,13 @@ def display_query(spec,page=1,size=50):
     page=max(1,int(page or 1));size=int(size);count,rows=engine.search(spec,limit=size,offset=(page-1)*size)
     pages=max(1,(count+size-1)//size)
     if page>pages:page=pages;count,rows=engine.search(spec,limit=size,offset=(page-1)*size)
-    key=remember(spec);state={'spec':spec,'rows':rows,'key':key,'page':page,'size':size}
+    preview_rows=(rows[:10] if page==1 and len(rows)>=10 else engine.search(spec,limit=10)[1]) if count>=10 else []
+    key=remember(spec);state={'spec':spec,'rows':rows,'preview_rows':preview_rows,'total':count,'key':key,'page':page,'size':size}
     choices=[(f'{(page-1)*size+i+1}. {r["image_id"]} · {r["score"] if r["score"] is not None else "—"} 分',r['image_id']+'|'+str(r['candidate_id'] or '')) for i,r in enumerate(rows)]
     status=f'共 **{count:,} 张影像**匹配 · 第 {page} / {pages} 页 · 地图展示全部匹配影像，表格每页 {size} 条。'
     if count==0:status+=' 没有符合条件的样本，可降低分数或选择其他判读。'
     export_html=f'<a href="/api/export/{key}" target="_blank" rel="noopener">下载全部 {count:,} 条匹配结果（CSV）</a>'
-    return frame(key),table_rows(rows,(page-1)*size),status,state,gr.update(choices=choices,value=choices[0][1] if choices else None),gr.update(value=page),export_html,[],''
+    return frame(key),table_rows(rows,(page-1)*size),status,state,gr.update(choices=choices,value=choices[0][1] if choices else None),gr.update(value=page),export_html,[],'',gr.update(visible=count>=10)
 
 def search(query,verdict,year,score,sort,country,use_bounds,bounds,size):
     spec={'query':query or '全部类别','verdict':{'可见':'visible','疑似':'possible','未辨认':'unrecognized','全部':'all'}[verdict],'year':year,'score':score,'sort':sort,'country':(country or '').strip().upper()}
@@ -116,18 +117,18 @@ def paginate(page,state,size):
     return display_query(state['spec'],page,size)
 
 def load_gallery(state):
-    if not state or not state['rows']:return [],'当前没有结果'
-    selected=state['rows'][:4];results=[];errors=[]
+    if not state or state.get('total',0)<10:return [],''
+    selected=state['preview_rows'][:10];results=[];errors=[]
     def fetch(r):
         try:return str(rgb(engine.image(r['image_id']))),f'{r["category"]} · {r["score"]} 分 · {r["image_id"]}'
         except Exception:errors.append(r['image_id']);return None
     with ThreadPoolExecutor(max_workers=3) as pool:
         for result in pool.map(fetch,selected):
             if result:results.append(result)
-    return results,'已读取本页前 '+str(len(results))+' 张原始影像。'+(' 读取失败：'+', '.join(errors)+'；可点击重试。' if errors else '')
+    return results,'已读取当前排序前 10 张中的 '+str(len(results))+' 张原始影像。'+(' 读取失败：'+', '.join(errors)+'；可点击重试。' if errors else '')
 
-def detail(selection,show_overlay,current=None):
-    if not selection:return None,'选择一条结果查看影像与判读。',[],[],None
+def detail(selection,show_overlay,current=None,object_key=None):
+    if not selection:return None,'选择一条结果查看影像与判读。',[],[],None,None,gr.update(choices=[],value=None),''
     bits=selection.split('|');image_id=bits[0];cid=int(bits[1]) if len(bits)>1 and bits[1].isdigit() else None
     try:row=engine.image(image_id)
     except KeyError:raise gr.Error('样本不存在')
@@ -144,15 +145,21 @@ def detail(selection,show_overlay,current=None):
         info+=f'**AI 判读类别：{html.escape(chosen["category"])}** · {LABELS.get(chosen["verdict"],chosen["verdict"])} · 自评分 **{chosen["score"]}**\n\n'
         info+=f'证据方位：{html.escape(chosen["location"] or "—")}\n\n判读理由：{html.escape(chosen["explanation"] or "—")}\n\n别解：{html.escape(chosen["alternative"] or "无")}'
     else:info+='此影像没有 AI 类别判读，处理状态：'+row['status']
-    picture=None
+    picture=None;zoom=None;choices=[];chosen_object=None;zoom_info=''
     try:
-        if show_overlay:
-            picture,n,_=overlay(row,tags);info+=f'\n\n叠加 {n} 个匹配的原始 OSM 对象轮廓。'
-        else:picture=str(rgb(row))
-    except Exception as exc:info+='\n\n影像或轮廓暂未加载，请点击“查看影像与标签”重试。';print('detail failed',image_id,type(exc).__name__,flush=True)
+        picture,zoom,objects,chosen_object,box,pixels=mask_views(row,tags,show_overlay,object_key)
+        choices=[(f"{o['osm_type']}/{o['osm_id']} · {o['foreground_pixels']:,} 像元",o['object_key']) for o in objects]
+        info+=f'\n\n匹配 {len(objects)} 个原始 OSM 对象，mask 合计 {pixels:,} 像元（{100*pixels/(picture.width*picture.height):.2f}%）。'
+        if box:
+            zoom_info=f"当前对象：{chosen_object['osm_type']}/{chosen_object['osm_id']} · {chosen_object['foreground_pixels']:,} 个 mask 像元 · 裁剪 {box[2]-box[0]} × {box[3]-box[1]} 个原始像元。青色框为放大范围，粉色为原始 mask。"
+        else:zoom_info='当前对象的原始 mask 没有前景像元，无法生成局部放大图。' if objects else '当前样本没有匹配的原始 OSM mask。'
+    except Exception as exc:
+        try:picture=str(rgb(row))
+        except Exception:pass
+        info+='\n\n原始 mask 暂未加载，请点击“查看影像与标签”重试。';print('detail failed',image_id,type(exc).__name__,flush=True)
     review_table=[[r['category'],LABELS.get(r['verdict'],r['verdict']),r['score'],r['location'],r['explanation'],r['alternative']] for r in reviews]
     meta={'image_id':image_id,'capture_time':row['capture_time'],'latitude':row['lat'],'longitude':row['lon'],'source':json.loads(row['source_json']),'annotation_shard':row['shard'],'dataset_revision':engine.manifest['revision']}
-    return picture,info,tags,review_table,meta
+    return picture,info,tags,review_table,meta,zoom,gr.update(choices=choices,value=chosen_object['object_key'] if chosen_object else None),zoom_info
 
 def select_table(state,evt:gr.SelectData):
     if not state:return None
@@ -187,7 +194,7 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
         with gr.Column(scale=4,min_width=280):
             with gr.Tabs():
                 with gr.Tab('标签检索'):
-                    query=gr.Dropdown(list(THEMES)+['全部类别']+[r['category'] for r in engine.categories if r['category'] not in THEMES],value='光伏',allow_custom_value=True,filterable=True,label='地物类别或 OSM 标签')
+                    query=gr.Dropdown(list(THEMES)+['全部类别']+[r['category'] for r in engine.categories if r['category'] not in THEMES],value='光伏',allow_custom_value=True,filterable=True,label='地物类别或 OSM 标签',elem_id='query-control')
                     gr.Examples([['光伏'],['工业设施'],['农田'],['水域']],inputs=query,label='常用类别')
                     verdict=gr.Radio(['可见','疑似','未辨认','全部'],value='可见',label='AI 判读结果')
                     year=gr.Dropdown(['全部年份']+[str(y) for y in engine.manifest['years']],value='全部年份',label='拍摄年份')
@@ -213,36 +220,42 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
     with gr.Row():
         previous=gr.Button('上一页',size='sm');page=gr.Number(value=1,minimum=1,precision=0,label='页码');go=gr.Button('跳转',size='sm');next_page=gr.Button('下一页',size='sm');export_html=gr.HTML('')
     with gr.Row():
-        selection=gr.Dropdown(choices=[],label='选择样本',allow_custom_value=True,filterable=True)
+        selection=gr.Dropdown(choices=[],label='选择样本',allow_custom_value=True,filterable=True,elem_id='sample-selection')
         show=gr.Button('查看影像与标签',variant='primary')
     with gr.Row():
-        with gr.Column(scale=1):
-            selected_image=gr.Image(label='原始 Sentinel-2 RGB',type='pil',height=384,interactive=False,elem_id='selected-image')
-            show_overlay=gr.Checkbox(label='叠加匹配的原始 OSM 轮廓',value=False)
         with gr.Column(scale=2):
+            with gr.Row():
+                selected_image=gr.Image(label='整图与原始 OSM mask',type='pil',format='png',height=384,interactive=False,elem_id='selected-image')
+                zoom_image=gr.Image(label='选中 mask 的局部放大',type='pil',format='png',height=384,interactive=False,elem_id='zoom-image')
+            show_overlay=gr.Checkbox(label='显示原始 OSM mask（半透明填色）',value=True)
+            object_selection=gr.Dropdown(choices=[],label='选择放大对象（按 mask 面积排序）',filterable=True,elem_id='mask-object-selection')
+            zoom_info=gr.Markdown('',elem_id='zoom-info')
+        with gr.Column(scale=1):
             info=gr.Markdown('选择结果行、地图样本或下拉框中的影像。',elem_id='sample-detail')
             with gr.Tabs():
                 with gr.Tab('匹配的 OSM 标签'):tag_table=gr.Dataframe(headers=['键','值'],interactive=False)
                 with gr.Tab('整图全部判读'):review_table=gr.Dataframe(headers=['类别','判读','自评分','证据方位','理由','别解'],interactive=False,wrap=True)
                 with gr.Tab('影像来源'):metadata=gr.JSON()
-    with gr.Row():
-        previews=gr.Button('加载 / 重试本页前四张影像',variant='secondary');gallery_status=gr.Markdown('')
-    gallery=gr.Gallery(label='本页影像预览',columns=4,height='auto',object_fit='contain')
+    with gr.Group(visible=False,elem_id='top-ten-preview') as preview_panel:
+        with gr.Row():
+            previews=gr.Button('加载 / 重试前 10 张影像',variant='secondary');gallery_status=gr.Markdown('')
+        gallery=gr.Gallery(label='当前排序前 10 张影像',columns=5,height='auto',object_fit='contain')
     gr.Markdown('评分对应所选 AI 判读；主题通过 OSM 标签匹配，详情保留原始判读类别。')
     gr.Markdown('地图展示本数据集的样本分布；一张影像只计一次。影像 © Copernicus Sentinel-2 / Major TOM（CC BY-SA 4.0）；OSM © OpenStreetMap contributors（ODbL 1.0）；底图 © Esri，海岸线 Natural Earth。')
-    outputs=[map_html,table,status,state,selection,page,export_html,gallery,gallery_status]
+    outputs=[map_html,table,status,state,selection,page,export_html,gallery,gallery_status,preview_panel]
     inputs=[query,verdict,year,score,sort,country,use_bounds,map_bounds,size]
     event=submit.click(search,inputs,outputs,api_name='search')
     event.success(load_gallery,state,[gallery,gallery_status],api_name=False)
-    go.click(paginate,[page,state,size],outputs,api_name='page')
-    previous.click(lambda p,s,z:paginate(max(1,p-1),s,z),[page,state,size],outputs,api_name=False)
-    next_page.click(lambda p,s,z:paginate(p+1,s,z),[page,state,size],outputs,api_name=False)
-    coverage.click(lambda:display_query({'coverage':True}),outputs=outputs,api_name='coverage')
+    go.click(paginate,[page,state,size],outputs,api_name='page').success(load_gallery,state,[gallery,gallery_status],api_name=False)
+    previous.click(lambda p,s,z:paginate(max(1,p-1),s,z),[page,state,size],outputs,api_name=False).success(load_gallery,state,[gallery,gallery_status],api_name=False)
+    next_page.click(lambda p,s,z:paginate(p+1,s,z),[page,state,size],outputs,api_name=False).success(load_gallery,state,[gallery,gallery_status],api_name=False)
+    coverage.click(lambda:display_query({'coverage':True}),outputs=outputs,api_name='coverage').success(load_gallery,state,[gallery,gallery_status],api_name=False)
     table.select(select_table,state,selection,api_name=False)
-    detail_outputs=[selected_image,info,tag_table,review_table,metadata]
+    detail_outputs=[selected_image,info,tag_table,review_table,metadata,zoom_image,object_selection,zoom_info]
     selection.change(detail,[selection,show_overlay,state],detail_outputs,api_name='detail')
-    show.click(detail,[selection,show_overlay,state],detail_outputs,api_name=False)
-    show_overlay.change(detail,[selection,show_overlay,state],detail_outputs,api_name=False)
+    show.click(detail,[selection,show_overlay,state,object_selection],detail_outputs,api_name=False)
+    show_overlay.change(detail,[selection,show_overlay,state,object_selection],detail_outputs,api_name=False)
+    object_selection.input(detail,[selection,show_overlay,state,object_selection],detail_outputs,api_name='zoom_object')
     previews.click(load_gallery,state,[gallery,gallery_status],api_name='previews')
     map_selection.input(select_map,[map_selection,selection],selection,api_name=False)
     def category_selected(evt:gr.SelectData):return evt.row_value[0]
@@ -251,7 +264,7 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
     findings.select(discovery_select,discovery_state,selection,api_name=False)
     def gallery_selected(current,evt:gr.SelectData):
         caption=evt.value.get('caption','') if isinstance(evt.value,dict) else ''
-        for r in current.get('rows',[]):
+        for r in current.get('preview_rows',[]):
             if r['image_id'] in caption:return r['image_id']+'|'+str(r['candidate_id'] or '')
         return gr.skip()
     gallery.select(gallery_selected,state,selection,api_name=False)
