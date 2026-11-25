@@ -12,7 +12,7 @@
   "topics": {
     "光伏": {
       "visible_images": 25,
-      "query_seconds": 1.205,
+      "query_seconds": 0.723,
       "top_scores": [
         100,
         98,
@@ -23,7 +23,7 @@
     },
     "工业设施": {
       "visible_images": 4089,
-      "query_seconds": 1.142,
+      "query_seconds": 0.671,
       "top_scores": [
         100,
         100,
@@ -34,7 +34,7 @@
     },
     "农田": {
       "visible_images": 7458,
-      "query_seconds": 1.139,
+      "query_seconds": 0.67,
       "top_scores": [
         100,
         100,
@@ -45,7 +45,7 @@
     },
     "水域": {
       "visible_images": 33007,
-      "query_seconds": 1.149,
+      "query_seconds": 0.695,
       "top_scores": [
         100,
         100,
@@ -56,7 +56,7 @@
     },
     "风电": {
       "visible_images": 12,
-      "query_seconds": 1.127,
+      "query_seconds": 0.669,
       "top_scores": [
         95,
         95,
@@ -67,7 +67,7 @@
     },
     "机场": {
       "visible_images": 504,
-      "query_seconds": 1.059,
+      "query_seconds": 0.63,
       "top_scores": [
         100,
         100,
@@ -78,7 +78,7 @@
     },
     "港口": {
       "visible_images": 4,
-      "query_seconds": 1.167,
+      "query_seconds": 0.667,
       "top_scores": [
         95,
         95,
@@ -88,7 +88,7 @@
     },
     "矿场": {
       "visible_images": 763,
-      "query_seconds": 1.085,
+      "query_seconds": 0.623,
       "top_scores": [
         98,
         95,
@@ -98,6 +98,6 @@
       ]
     }
   },
-  "elapsed_seconds": 18.44,
+  "elapsed_seconds": 12.73,
   "passed": true
 }

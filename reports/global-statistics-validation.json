@@ -1,0 +1,38 @@
+{
+  "dataset": "WeijieWu/EEE-benchmark-OSM-249K-AI-Filtered-v2",
+  "revision": "a3a5fbb34b0eedab262468240d8e5e06f9f24fdc",
+  "latest_v2_revision_matches": true,
+  "source_review_count": 555542,
+  "missing_or_changed_reviews": 0,
+  "extra_or_changed_reviews": 0,
+  "full_image_denominator": 248719,
+  "all": {
+    "records": 555542,
+    "images": 135281,
+    "categories": 1535,
+    "image_pct": 54.391099996381456
+  },
+  "visible": {
+    "records": 252083,
+    "images": 111329,
+    "categories": 523,
+    "image_pct": 44.760955134107164
+  },
+  "osm_annotation_rows": 16662527,
+  "road_all": {
+    "category": "道路",
+    "records": 59179,
+    "images": 59179,
+    "object_rows": 2342971,
+    "image_pct": 23.79351798616109
+  },
+  "road_visible": {
+    "category": "道路",
+    "records": 44362,
+    "images": 44362,
+    "object_rows": 2025591,
+    "image_pct": 17.836192651144465
+  },
+  "seconds": 37.32,
+  "passed": true
+}

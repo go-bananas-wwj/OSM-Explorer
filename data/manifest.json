@@ -29,9 +29,11 @@
       "sha256": "3645460691094cdc2e8d23bde2387a824b997e0861397378225f80fc5793b034"
     },
     "reviews.parquet": {
-      "bytes": 18579709,
-      "sha256": "244889dc8a94624b79413852e3e7a0e6ebc88a37e4d23b45357d83dd6590d03e"
+      "bytes": 14341413,
+      "sha256": "a8a8b359ba6caaee5fa376915160ea79f552bd171ff7043f098b2ac264dab188"
     }
   },
-  "theme_mapping": "Same-object solar/wind qualifiers linked through reviewed power tag; original AI category and score unchanged."
+  "theme_mapping": "Same-object solar/wind qualifiers linked through reviewed power tag; original AI category and score unchanged.",
+  "osm_annotation_rows": 16662527,
+  "object_count_definition": "Unique object_key occurrences within image/candidate, linked by original v2 ai_tag_reviews key/value pairs. Only osm_annotations; excludes context-only parent relations. Not individual-object AI verification."
 }

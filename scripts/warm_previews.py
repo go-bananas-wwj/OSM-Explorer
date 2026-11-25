@@ -6,12 +6,15 @@ from engine import Engine,ROOT,THEMES
 from imagery import rgb
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--topics',nargs='*');p.add_argument('--limit',type=int,default=10);args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--topics',nargs='*');p.add_argument('--limit',type=int,default=10);p.add_argument('--discoveries',action='store_true');args=p.parse_args()
     engine=Engine();dest=ROOT/'data/previews';dest.mkdir(exist_ok=True)
     rows={}
     for topic in (args.topics or THEMES):
         _,found=engine.search({'query':topic,'verdict':'visible'},limit=args.limit)
         for r in found:rows[r['image_id']]=engine.image(r['image_id'])
+    if args.discoveries:
+        for mode in ['类别丰富','稀有类别','疑似与别解']:
+            for r in engine.discoveries(mode,limit=12)[0]:rows[r['image_id']]=engine.image(r['image_id'])
     def work(row):
         try:
             p=rgb(row);out=dest/(row['image_id']+'.png')

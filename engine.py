@@ -41,6 +41,8 @@ class Engine:
         for name in ['images','reviews']:
             path=str(self.data/(name+'.parquet')).replace("'","''")
             self.db.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{path}')")
+        self._stats_cache={}
+        self.has_object_counts='osm_object_rows' in [r['name'] for r in self.rows("PRAGMA table_info('reviews')")]
         self.categories=self.rows('SELECT category,count(*) n FROM reviews GROUP BY category ORDER BY n DESC')
     def rows(self,sql,params=None):
         with self.lock:
@@ -50,7 +52,9 @@ class Engine:
         if spec.get('coverage'): return 'SELECT i.*,NULL::VARCHAR category,NULL::VARCHAR verdict,NULL::INTEGER score,NULL::INTEGER candidate_id,0::BIGINT matches FROM images i',[]
         clauses=[];params=[]
         q=(spec.get('query') or '').strip();q=ALIASES.get(q.lower(),q)
-        if q and q!='全部类别':
+        if spec.get('exact_category'):
+            clauses.append('r.category=?');params.append(spec['exact_category'])
+        elif q and q!='全部类别':
             terms=THEMES.get(q,[q]);conditions=[]
             for t in terms:
                 if '=' in t:
@@ -106,17 +110,51 @@ class Engine:
         return rows[0]
     def reviews(self,image_id):
         return self.rows('SELECT * FROM reviews WHERE image_id=? ORDER BY score DESC NULLS LAST,candidate_id',[image_id])
-    def stats(self):
-        return self.rows('''SELECT category,count(*) candidates,count(*) FILTER(WHERE verdict='visible') visible,
-          count(*) FILTER(WHERE verdict='possible') possible,count(*) FILTER(WHERE verdict='unrecognized') unrecognized,
-          round(100.0*count(*) FILTER(WHERE verdict='visible')/count(*),1) visible_pct
-          FROM reviews GROUP BY category ORDER BY visible DESC,category''')
-    def discoveries(self,mode):
+    def stats(self,verdict='all',keyword='',sort='images'):
+        if verdict not in ('all','visible','possible','unrecognized'):raise ValueError('Invalid verdict')
+        if verdict not in self._stats_cache:
+            where='' if verdict=='all' else 'WHERE verdict=?'
+            params=[] if verdict=='all' else [verdict]
+            objects='sum(osm_object_rows)' if self.has_object_counts else 'NULL::BIGINT'
+            total=self.manifest['image_count']
+            rows=self.rows(f"""SELECT category,count(*) records,count(DISTINCT image_id) images,
+              {objects} object_rows,100.0*count(DISTINCT image_id)/{int(total)} image_pct
+              FROM reviews {where} GROUP BY category ORDER BY images DESC,category""",params)
+            summary=self.rows(f"SELECT count(*) records,count(DISTINCT image_id) images,count(DISTINCT category) categories FROM reviews {where}",params)[0]
+            summary['image_pct']=100.0*summary['images']/total
+            self._stats_cache[verdict]=(rows,summary)
+        rows,summary=self._stats_cache[verdict]
+        filtered=[dict(r) for r in rows if keyword.strip().casefold() in r['category'].casefold()]
+        if sort=='objects':filtered.sort(key=lambda r:(-(r['object_rows'] or 0),r['category']))
+        elif sort=='records':filtered.sort(key=lambda r:(-r['records'],r['category']))
+        elif sort=='category':filtered.sort(key=lambda r:r['category'])
+        return filtered,dict(summary)
+
+    def discoveries(self,mode,category=None,min_score=0,limit=12,offset=0):
+        limit=max(1,min(30,int(limit)));offset=max(0,int(offset))
+        where='r.score>=?';params=[int(min_score)]
+        if category and category!='全部类别':where+=' AND r.category=?';params.append(category)
         if mode=='类别丰富':
-            return self.rows('''SELECT r.image_id,count(*) n,i.year,round(i.lat,3) lat,round(i.lon,3) lon
-              FROM reviews r JOIN images i USING(image_id) WHERE verdict='visible'
-              GROUP BY r.image_id,i.year,i.lat,i.lon ORDER BY n DESC,r.image_id LIMIT 30''')
-        if mode=='疑似与别解':
-            return self.rows("SELECT image_id,category,score,alternative FROM reviews WHERE verdict='possible' AND alternative IS NOT NULL AND alternative NOT IN ('无','') ORDER BY score DESC,image_id LIMIT 30")
-        return self.rows('''WITH rare AS (SELECT category,count(*) n FROM reviews WHERE verdict='visible' GROUP BY category HAVING count(*) BETWEEN 1 AND 50)
-            SELECT r.image_id,r.category,r.score,rare.n FROM reviews r JOIN rare USING(category) WHERE verdict='visible' ORDER BY rare.n,r.score DESC,r.image_id LIMIT 30''')
+            sql=f"""WITH richness AS (SELECT image_id,count(DISTINCT category) richness FROM reviews WHERE verdict='visible' GROUP BY image_id), ranked AS (
+              SELECT r.*,richness.richness,
+              row_number() OVER(PARTITION BY image_id ORDER BY score DESC,candidate_id) rn
+              FROM reviews r JOIN richness USING(image_id) WHERE r.verdict='visible' AND {where})
+              SELECT image_id,candidate_id,category,score,verdict,richness metric,explanation,alternative
+              FROM ranked WHERE rn=1 ORDER BY richness DESC,score DESC,image_id LIMIT ? OFFSET ?"""
+        elif mode=='疑似与别解':
+            sql=f"""SELECT image_id,candidate_id,category,score,verdict,score metric,explanation,alternative
+              FROM (SELECT r.*,row_number() OVER(PARTITION BY image_id ORDER BY score DESC,candidate_id) rn
+              FROM reviews r WHERE verdict='possible' AND alternative IS NOT NULL AND alternative NOT IN ('无','') AND {where})
+              WHERE rn=1 ORDER BY score DESC,image_id LIMIT ? OFFSET ?"""
+        else:
+            sql=f"""WITH frequency AS (
+                SELECT category,count(DISTINCT image_id) frequency FROM reviews WHERE verdict='visible' GROUP BY category HAVING count(DISTINCT image_id) BETWEEN 1 AND 50),
+              ranked AS (SELECT r.*,f.frequency,row_number() OVER(PARTITION BY image_id ORDER BY f.frequency,r.score DESC,r.candidate_id) rn
+                FROM reviews r JOIN frequency f USING(category) WHERE verdict='visible' AND {where})
+              SELECT image_id,candidate_id,category,score,verdict,frequency metric,explanation,alternative
+              FROM ranked WHERE rn=1 ORDER BY frequency,score DESC,image_id LIMIT ? OFFSET ?"""
+        rows=self.rows(sql,params+[limit+1,offset]);has_more=len(rows)>limit;rows=rows[:limit]
+        if rows:
+            ids=[r['image_id'] for r in rows];positions={r['image_id']:r for r in self.rows('SELECT image_id,year,country,lat,lon FROM images WHERE image_id IN ('+','.join(['?']*len(ids))+')',ids)}
+            for r in rows:r.update(positions[r['image_id']])
+        return rows,has_more

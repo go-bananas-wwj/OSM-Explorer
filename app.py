@@ -1,8 +1,9 @@
 """OSM Explorer: Gradio UI with a full-result, viewport-aggregated Leaflet map."""
 import csv, html, io, json, os, re, threading, time, uuid
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import urlencode
 import gradio as gr
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -10,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from shapely import wkb
 from engine import Engine, LABELS, THEMES, ROOT, matching_tags
 from imagery import rgb, mask_views, CACHE
+from analytics import STAT_HEADERS, SCOPE, SORT, statistic_values, statistics_chart, overview, chosen_category, discovery_caption, discovery_description
 
 engine=Engine(); api=FastAPI(title='OSM Explorer')
 api.mount('/osm-static',StaticFiles(directory=ROOT/'static'),name='static')
@@ -67,6 +69,9 @@ def export(key:str):
     return Response('\ufeff'+buf.getvalue(),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="osm-explorer-results.csv"'})
 
 CSS='''
+.global-metrics{display:flex;flex-wrap:wrap;gap:24px;padding:8px 0 18px}.global-metrics>div{flex:1;min-width:150px}.global-metrics span{display:block;color:#656070;font-size:14px}.global-metrics strong{display:block;font-size:25px;font-weight:600;margin-top:6px}
+#statistics-table{overflow-x:auto}
+
 .gradio-container{--block-padding:8px!important;--layout-gap:12px!important;width:100%!important;min-width:0!important;max-width:1500px!important;margin:auto!important;font-family:system-ui,sans-serif}
 .gradio-container main{max-width:100%!important}
 #map-frame{padding:0!important;border:1px solid #ddd;border-radius:4px;overflow:hidden}
@@ -75,7 +80,7 @@ CSS='''
 #search-layout>div{min-width:0!important}
 .intro{font-size:16px;color:#656070;line-height:1.7;margin:0 0 4px}.links{font-size:14px;margin-left:12px}#intro{padding:0!important}#intro .html-container{padding:0!important}.links a{color:#9851ed;margin-right:14px}
 #result-table{overflow-x:auto}#result-table table{min-width:850px}
-@media(max-width:850px){#search-layout{flex-direction:column!important}#map-frame iframe{height:380px}.gradio-container{padding:12px!important}h1{font-size:23px!important}}
+@media(max-width:850px){#discovery-gallery .grid-container{grid-template-columns:repeat(2,minmax(0,1fr))!important}#search-layout{flex-direction:column!important}#map-frame iframe{height:380px}.gradio-container{padding:12px!important}h1{font-size:23px!important}}
 '''
 BRIDGE_JS='''() => {
  if(window.__osmBridge)return;window.__osmBridge=true;
@@ -100,12 +105,16 @@ def display_query(spec,page=1,size=50):
     key=remember(spec);state={'spec':spec,'rows':rows,'preview_rows':preview_rows,'total':count,'key':key,'page':page,'size':size}
     choices=[(f'{(page-1)*size+i+1}. {r["image_id"]} · {r["score"] if r["score"] is not None else "—"} 分',r['image_id']+'|'+str(r['candidate_id'] or '')) for i,r in enumerate(rows)]
     status=f'共 **{count:,} 张影像**匹配 · 第 {page} / {pages} 页 · 地图展示全部匹配影像，表格每页 {size} 条。'
+    if spec.get('exact_category'):status='**v2 精确类别：'+html.escape(spec['exact_category'])+'** · '+status
     if count==0:status+=' 没有符合条件的样本，可降低分数或选择其他判读。'
     export_html=f'<a href="/api/export/{key}" target="_blank" rel="noopener">下载全部 {count:,} 条匹配结果（CSV）</a>'
     return frame(key),table_rows(rows,(page-1)*size),status,state,gr.update(choices=choices,value=choices[0][1] if choices else None),gr.update(value=page),export_html,[],'',gr.update(visible=count>=10)
 
 def search(query,verdict,year,score,sort,country,use_bounds,bounds,size):
+    exact=query[3:] if query and query.startswith('v2:') else None
+    if exact:query=exact
     spec={'query':query or '全部类别','verdict':{'可见':'visible','疑似':'possible','未辨认':'unrecognized','全部':'all'}[verdict],'year':year,'score':score,'sort':sort,'country':(country or '').strip().upper()}
+    if exact:spec['exact_category']=exact
     if use_bounds:
         try:
             b=json.loads(bounds)['bounds'];w,e=b['west'],b['east'];spec['bbox']=[-180 if e-w>=359.9 else (w+180)%360-180,max(-90,b['south']),180 if e-w>=359.9 else (e+180)%360-180,min(90,b['north'])]
@@ -139,7 +148,9 @@ def detail(selection,show_overlay,current=None,object_key=None):
     if context_tags:
         info+='同一 OSM 对象的主题属性：'+', '.join(k+'='+v for k,v in context_tags)+'。评分保留原始 AI 类别判读。\n\n'
         tags=tags+context_tags
-    if chosen and cid is not None:
+    if chosen and (current or {}).get('spec',{}).get('exact_category'):
+        tags=json.loads(chosen['tags_json'])
+    elif chosen and cid is not None:
         tags=matching_tags(chosen,((current or {}).get('spec') or {}).get('query',''))
     if chosen:
         info+=f'**AI 判读类别：{html.escape(chosen["category"])}** · {LABELS.get(chosen["verdict"],chosen["verdict"])} · 自评分 **{chosen["score"]}**\n\n'
@@ -167,6 +178,14 @@ def select_table(state,evt:gr.SelectData):
     if i>=len(state['rows']):return None
     r=state['rows'][i];return r['image_id']+'|'+str(r['candidate_id'] or '')
 
+def select_review(selection,evt:gr.SelectData):
+    if not selection:return gr.skip()
+    image_id=selection.split('|')[0];category=evt.row_value[0]
+    review=next((r for r in engine.reviews(image_id) if r['category']==category),None)
+    if not review:return gr.skip()
+    value=image_id+'|'+str(review['candidate_id'])
+    return gr.update(choices=[(image_id+' · '+category,value)],value=value)
+
 def select_map(message,current):
     try:
         d=json.loads(message);iid=d['image_id'];cid=d.get('candidate_id');engine.image(iid)
@@ -175,26 +194,92 @@ def select_map(message,current):
         return gr.update(choices=[(iid,value)],value=value)
     except Exception:return gr.skip()
 
-def stats_table():return [[r[k] for k in ['category','candidates','visible','possible','unrecognized','visible_pct']] for r in engine.stats()]
-def discovery(mode):
-    rows=engine.discoveries(mode)
-    headers=list(rows[0]) if rows else ['image_id'];return gr.update(headers=headers,value=[[r[k] for k in headers] for r in rows]),rows
+def refresh_stats(scope,keyword,order):
+    rows,summary=engine.stats(SCOPE[scope],keyword,SORT[order])
+    choices=[r['category'] for r in rows];selected=choices[0] if choices else None
+    text=f"**当前口径：{scope}** · {summary['records']:,} 条 AI 判读 · 覆盖 {summary['images']:,} 张影像（全库的 {summary['image_pct']:.4f}%） · {summary['categories']:,} 类。当前列表匹配 {len(rows):,} 类。"
+    link='/api/statistics.csv?'+urlencode({'scope':SCOPE[scope],'keyword':keyword,'sort':SORT[order]})
+    return statistic_values(rows),statistics_chart(rows),text,gr.update(choices=choices,value=selected),rows,chosen_category(selected,rows,engine.manifest['image_count']),f'<a href="{html.escape(link,quote=True)}" target="_blank">下载当前全局统计（CSV）</a>'
 
-def discovery_select(rows,evt:gr.SelectData):
-    if not rows:return gr.skip()
-    i=evt.index[0];r=rows[i];value=r['image_id']+'|';return gr.update(choices=[(r['image_id'],value)],value=value)
+def statistic_selection(evt:gr.SelectData):return evt.row_value[0]
+
+def open_statistic(category,scope):
+    if not category:raise gr.Error('请先选择一个类别')
+    spec={'query':category,'exact_category':category,'verdict':SCOPE[scope],'score':0,'sort':'评分从高到低','year':'全部年份'}
+    result=display_query(spec)
+    return (*result,gr.update(selected='explore'),'v2:'+category,'全部' if scope=='全部判读' else scope,'全部年份',0,'评分从高到低','',False,50)
+
+def discovery(mode,category,min_score,page=1):
+    page=max(1,int(page or 1));rows,more=engine.discoveries(mode,category,min_score,12,(page-1)*12)
+    current={'rows':rows,'mode':mode,'category':category,'score':min_score,'page':page,'more':more}
+    choices=[(f"{r['category']} · {r['score']} 分 · {r['image_id']}",r['image_id']) for r in rows]
+    selected=rows[0] if rows else None
+    status=f'第 {page} 组 · {len(rows)} 张影像 · '+('还有下一组' if more else '已到最后一组')
+    return [],current,status,gr.update(choices=choices,value=selected['image_id'] if selected else None),discovery_description(selected,mode),gr.update(value=page),gr.update(interactive=more),gr.update(interactive=page>1)
+
+def discovery_tab_open(mode,category,min_score,current):
+    current=current if isinstance(current,dict) else {}
+    same=(current.get('mode'),current.get('category'),current.get('score'))==(mode,category,min_score)
+    return discovery(mode,category,min_score,current.get('page',1) if same else 1)
+
+def discovery_gallery(current):
+    rows=(current or {}).get('rows',[])
+    if not rows:
+        yield [],'没有符合条件的样本。';return
+    images={};failed=[]
+    def fetch(r):return (str(rgb(engine.image(r['image_id']))),discovery_caption(r,current['mode']))
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        jobs={pool.submit(fetch,r):i for i,r in enumerate(rows)}
+        for job in as_completed(jobs):
+            i=jobs[job]
+            try:images[i]=job.result()
+            except Exception:failed.append(rows[i]['image_id'])
+            yield [images[i] for i in sorted(images)],f"第 {current['page']} 组 · 已加载 {len(images)} / {len(rows)} 张影像"+(' · 可点击重试加载失败的影像' if failed else '')
+
+def choose_discovery(current,evt:gr.SelectData):
+    caption=evt.value.get('caption','') if isinstance(evt.value,dict) else ''
+    for row in current.get('rows',[]):
+        if row['image_id'] in caption:return row['image_id']
+    return gr.skip()
+
+def describe_discovery(image_id,current):
+    row=next((r for r in (current or {}).get('rows',[]) if r['image_id']==image_id),None)
+    return discovery_description(row,(current or {}).get('mode',''))
+
+def open_discovery(image_id,current):
+    row=next((r for r in (current or {}).get('rows',[]) if r['image_id']==image_id),None)
+    if not row:raise gr.Error('请先选择一个发现样本')
+    scope=LABELS[row['verdict']]
+    result=list(open_statistic(row['category'],scope))
+    value=row['image_id']+'|'+str(row['candidate_id'])
+    choices=[c for c in result[4]['choices'] if c[1]!=value];choices.insert(0,(f"发现样本 · {row['image_id']} · {row['score']} 分",value))
+    result[4]=gr.update(choices=choices,value=value)
+    return tuple(result)
+
+@api.get('/api/statistics')
+def statistics_api(scope:str='all',keyword:str='',sort:str='images'):
+    if scope not in SCOPE.values():raise HTTPException(400,'无效判读范围')
+    rows,summary=engine.stats(scope,keyword,sort)
+    return {'dataset':engine.manifest['dataset'],'revision':engine.manifest['revision'],'image_denominator':engine.manifest['image_count'],'scope':scope,'summary':summary,'categories':rows}
+
+@api.get('/api/statistics.csv')
+def statistics_export(scope:str='all',keyword:str='',sort:str='images'):
+    result=statistics_api(scope,keyword,sort);buf=io.StringIO();writer=csv.writer(buf);writer.writerow(STAT_HEADERS+['全库影像数','判读范围','数据版本'])
+    for row in statistic_values(result['categories']):
+        writer.writerow(["'"+v if isinstance(v,str) and v.startswith(('=','+','-','@')) else v for v in row]+[result['image_denominator'],scope,result['revision']])
+    return Response('\ufeff'+buf.getvalue(),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="osm-v2-global-statistics.csv"'})
 
 with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.themes.Default(primary_hue=gr.themes.colors.purple,font=['ui-sans-serif','system-ui','sans-serif']),css=CSS,js=BRIDGE_JS) as demo:
     gr.Markdown('# OSM Explorer：OSM 标签与卫星影像探索')
     if not engine.manifest['complete']:gr.Markdown('本地开发预览：全量索引正在构建。')
-    gr.HTML(f'<div class="intro">浏览 <b>{engine.manifest["image_count"]:,} 张影像</b>中的 OSM 标签、AI 判读与地理分布。查询结果默认按自评分从高到低排列。<span class="links"><a href="https://modelscope.cn/datasets/WeijieWu/EEE-benchmark-OSM-249K-AI-Filtered-v2" target="_blank">数据集</a><a href="https://github.com/go-bananas-wwj/OSM-Explorer" target="_blank">GitHub 源码</a><a href="https://modelscope.cn/datasets/WeijieWu/EEE-benchmark-OSM-249K-AI-Filtered-v2/resolve/master/DATA_FORMAT.md" target="_blank">字段说明</a></span></div>',elem_id='intro')
-    state=gr.State({});discovery_state=gr.State([])
+    gr.HTML(f'<div class="intro">浏览 <b>{engine.manifest["image_count"]:,} 张影像</b>中的 <b>v2</b> OSM 标签、AI 判读与地理分布。查询结果默认按自评分从高到低排列。<span class="links"><a href="https://modelscope.cn/datasets/WeijieWu/EEE-benchmark-OSM-249K-AI-Filtered-v2" target="_blank">数据集</a><a href="https://github.com/go-bananas-wwj/OSM-Explorer" target="_blank">GitHub 源码</a><a href="https://modelscope.cn/datasets/WeijieWu/EEE-benchmark-OSM-249K-AI-Filtered-v2/resolve/master/DATA_FORMAT.md" target="_blank">字段说明</a></span></div>',elem_id='intro')
+    state=gr.State({});discovery_state=gr.State({})
     map_selection=gr.Textbox(elem_id='map-selection',container=False);map_bounds=gr.Textbox(elem_id='map-bounds',container=False)
-    with gr.Row(elem_id='search-layout'):
-        with gr.Column(scale=4,min_width=280):
-            with gr.Tabs():
-                with gr.Tab('标签检索'):
-                    query=gr.Dropdown(list(THEMES)+['全部类别']+[r['category'] for r in engine.categories if r['category'] not in THEMES],value='光伏',allow_custom_value=True,filterable=True,label='地物类别或 OSM 标签',elem_id='query-control')
+    with gr.Tabs(selected='explore') as main_tabs:
+        with gr.Tab('标签检索',id='explore'):
+            with gr.Row(elem_id='search-layout'):
+                with gr.Column(scale=4,min_width=280):
+                    query=gr.Dropdown([('主题 · '+t,t) for t in THEMES]+['全部类别']+[('v2 · '+r['category'],'v2:'+r['category']) for r in engine.categories],value='光伏',allow_custom_value=True,filterable=True,label='检索主题 / v2 类别 / OSM 键值',elem_id='query-control')
                     gr.Examples([['光伏'],['工业设施'],['农田'],['水域']],inputs=query,label='常用类别')
                     verdict=gr.Radio(['可见','疑似','未辨认','全部'],value='可见',label='AI 判读结果')
                     year=gr.Dropdown(['全部年份']+[str(y) for y in engine.manifest['years']],value='全部年份',label='拍摄年份')
@@ -206,42 +291,75 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
                         use_bounds=gr.Checkbox(label='仅查询当前地图范围',value=False)
                         size=gr.Dropdown([20,50,100,200],value=50,label='每页结果数')
                     coverage=gr.Button('显示全部覆盖',variant='secondary')
-                with gr.Tab('类别统计'):
-                    gr.Markdown('按影像内的 AI 类别统计候选数与可见比例。点击类别后，再点击查询。')
-                    stats=gr.Dataframe(headers=['类别','候选','可见','疑似','未辨认','可见率 %'],value=stats_table(),interactive=False,max_height=420)
-                with gr.Tab('样本发现'):
-                    mode=gr.Radio(['类别丰富','稀有类别','疑似与别解'],value='类别丰富',label='发现方式')
-                    discover=gr.Button('查看样本',variant='primary')
-                    findings=gr.Dataframe(headers=['image_id','可见类别数','年份','纬度','经度'],value=[],interactive=False,max_height=400)
-        with gr.Column(scale=7,min_width=0):
-            map_html=gr.HTML(frame(),elem_id='map-frame')
-            status=gr.Markdown('全球覆盖图包含全部影像。选择类别后查询，缩放地图可查看更细的分布。')
-    table=gr.Dataframe(headers=TABLE_HEADERS,datatype=['number','str','str','number','number','number','number','str','number'],value=[],interactive=False,max_height=300,wrap=False,label='查询结果',elem_id='result-table')
-    with gr.Row():
-        previous=gr.Button('上一页',size='sm');page=gr.Number(value=1,minimum=1,precision=0,label='页码');go=gr.Button('跳转',size='sm');next_page=gr.Button('下一页',size='sm');export_html=gr.HTML('')
-    with gr.Row():
-        selection=gr.Dropdown(choices=[],label='选择样本',allow_custom_value=True,filterable=True,elem_id='sample-selection')
-        show=gr.Button('查看影像与标签',variant='primary')
-    with gr.Row():
-        with gr.Column(scale=2):
+                with gr.Column(scale=7,min_width=0):
+                    map_html=gr.HTML(frame(),elem_id='map-frame')
+                    status=gr.Markdown('全球覆盖图包含全部影像。选择类别后查询，缩放地图可查看更细的分布。')
+            table=gr.Dataframe(headers=TABLE_HEADERS,datatype=['number','str','str','number','number','number','number','str','number'],value=[],interactive=False,max_height=300,wrap=False,label='查询结果',elem_id='result-table')
             with gr.Row():
-                selected_image=gr.Image(label='整图与原始 OSM mask',type='pil',format='png',height=384,interactive=False,elem_id='selected-image')
-                zoom_image=gr.Image(label='选中 mask 的局部放大',type='pil',format='png',height=384,interactive=False,elem_id='zoom-image')
-            show_overlay=gr.Checkbox(label='显示原始 OSM mask（半透明填色）',value=True)
-            object_selection=gr.Dropdown(choices=[],label='选择放大对象（按 mask 面积排序）',filterable=True,elem_id='mask-object-selection')
-            zoom_info=gr.Markdown('',elem_id='zoom-info')
-        with gr.Column(scale=1):
-            info=gr.Markdown('选择结果行、地图样本或下拉框中的影像。',elem_id='sample-detail')
-            with gr.Tabs():
-                with gr.Tab('匹配的 OSM 标签'):tag_table=gr.Dataframe(headers=['键','值'],interactive=False)
-                with gr.Tab('整图全部判读'):review_table=gr.Dataframe(headers=['类别','判读','自评分','证据方位','理由','别解'],interactive=False,wrap=True)
-                with gr.Tab('影像来源'):metadata=gr.JSON()
-    with gr.Group(visible=False,elem_id='top-ten-preview') as preview_panel:
-        with gr.Row():
-            previews=gr.Button('加载 / 重试前 10 张影像',variant='secondary');gallery_status=gr.Markdown('')
-        gallery=gr.Gallery(label='当前排序前 10 张影像',columns=5,height='auto',object_fit='contain')
-    gr.Markdown('评分对应所选 AI 判读；主题通过 OSM 标签匹配，详情保留原始判读类别。')
-    gr.Markdown('地图展示本数据集的样本分布；一张影像只计一次。影像 © Copernicus Sentinel-2 / Major TOM（CC BY-SA 4.0）；OSM © OpenStreetMap contributors（ODbL 1.0）；底图 © Esri，海岸线 Natural Earth。')
+                previous=gr.Button('上一页',size='sm');page=gr.Number(value=1,minimum=1,precision=0,label='页码');go=gr.Button('跳转',size='sm');next_page=gr.Button('下一页',size='sm');export_html=gr.HTML('')
+            with gr.Row():
+                selection=gr.Dropdown(choices=[],label='选择样本',allow_custom_value=True,filterable=True,elem_id='sample-selection')
+                show=gr.Button('查看影像与标签',variant='primary')
+            with gr.Row():
+                with gr.Column(scale=2):
+                    with gr.Row():
+                        selected_image=gr.Image(label='整图与原始 OSM mask',type='pil',format='png',height=384,interactive=False,elem_id='selected-image')
+                        zoom_image=gr.Image(label='选中 mask 的局部放大',type='pil',format='png',height=384,interactive=False,elem_id='zoom-image')
+                    show_overlay=gr.Checkbox(label='显示原始 OSM mask（半透明填色）',value=True)
+                    object_selection=gr.Dropdown(choices=[],label='选择放大对象（按 mask 面积排序）',filterable=True,elem_id='mask-object-selection')
+                    zoom_info=gr.Markdown('',elem_id='zoom-info')
+                with gr.Column(scale=1):
+                    info=gr.Markdown('选择结果行、地图样本或下拉框中的影像。',elem_id='sample-detail')
+                    with gr.Tabs():
+                        with gr.Tab('匹配的 OSM 标签'):tag_table=gr.Dataframe(headers=['键','值'],interactive=False)
+                        with gr.Tab('整图全部判读'):review_table=gr.Dataframe(headers=['类别','判读','自评分','证据方位','理由','别解'],interactive=False,wrap=True)
+                        with gr.Tab('影像来源'):metadata=gr.JSON()
+            with gr.Group(visible=False,elem_id='top-ten-preview') as preview_panel:
+                with gr.Row():
+                    previews=gr.Button('加载 / 重试前 10 张影像',variant='secondary');gallery_status=gr.Markdown('')
+                gallery=gr.Gallery(label='当前排序前 10 张影像',columns=5,height='auto',object_fit='contain')
+            gr.Markdown('评分对应所选 AI 判读；主题通过 OSM 标签匹配，详情保留原始判读类别。')
+            gr.Markdown('地图展示本数据集的样本分布；一张影像只计一次。影像 © Copernicus Sentinel-2 / Major TOM（CC BY-SA 4.0）；OSM © OpenStreetMap contributors（ODbL 1.0）；底图 © Esri，海岸线 Natural Earth。')
+        with gr.Tab('全局统计',id='statistics') as statistics_tab:
+            gr.HTML(overview(engine))
+            gr.Markdown('每个类别有多少条记录、覆盖多少张影像、占全库多少比例。统计不受地图范围、年份或检索页分数筛选影响。')
+            with gr.Row():
+                stat_scope=gr.Radio(list(SCOPE),value='可见',label='判读范围',scale=2)
+                stat_keyword=gr.Textbox(label='搜索 v2 类别',placeholder='例如 道路、建筑、power=plant',scale=2)
+                stat_sort=gr.Dropdown(list(SORT),value='覆盖影像数',label='列表排序',scale=1)
+                stat_apply=gr.Button('更新统计',variant='primary',scale=1)
+            stats_rows=gr.State([])
+            stat_summary=gr.Markdown()
+            with gr.Row():
+                stat_plot=gr.BarPlot(value=statistics_chart(engine.stats('visible')[0]),x='v2 类别',y='覆盖影像数',sort='-y',x_label_angle=-35,tooltip=STAT_HEADERS,height=380,label='影像覆盖数量 Top 15',scale=2)
+                with gr.Column(scale=1):
+                    stat_category=gr.Dropdown(choices=[],label='选择类别查看详情',filterable=True)
+                    stat_detail=gr.Markdown()
+                    stat_open=gr.Button('在地图中查看该类样本',variant='primary')
+            stats=gr.Dataframe(headers=STAT_HEADERS,value=[],datatype=['str','number','number','number','number'],column_widths=['32%','15%','23%','15%','15%'],interactive=False,wrap=True,max_height=520,label='全局类别统计',elem_id='statistics-table')
+            stat_export=gr.HTML()
+            with gr.Accordion('数据版本与统计口径',open=False):
+                gr.Markdown(f"数据来自 [{engine.manifest['dataset']}](https://modelscope.cn/datasets/{engine.manifest['dataset']})，固定版本 `{engine.manifest['revision']}`。AI 类别、判读、评分均沿用 v2 的 `ai_feature_reviews`。\n\n- **AI 判读条数**：图像级类别判读记录；v2 同图同类一条，因此单类的记录数与覆盖影像数相同。\n- **图内 OSM 对象关联条数**：根据 v2 `ai_tag_reviews` 原始键值关联 `osm_annotations`，同图同对象同类只计一次，跨图可重复。它不是 AI 逐对象检测数量；仅上下文父关系不计入。\n- **占全库影像比例**：覆盖影像数 ÷ {engine.manifest['image_count']:,}。一张影像可包含多个类别，各类占比不要求相加为 100%。\n- 光伏、工业设施等是检索主题；这里统计的是原始 v2 类别。")
+        with gr.Tab('样本发现',id='discover') as discovery_tab:
+            gr.Markdown('类别丰富按整图可见类别数排序；稀有类别在全库仅有 1–50 张可见影像；疑似与别解保留模型的其他解释。选中影像后可直接打开判读与原始 mask。')
+            with gr.Row():
+                mode=gr.Radio(['类别丰富','稀有类别','疑似与别解'],value='类别丰富',label='发现方式',scale=2)
+                discovery_category=gr.Dropdown(['全部类别']+[r['category'] for r in engine.categories],value='全部类别',label='限定 v2 类别',filterable=True,scale=2)
+                discovery_score=gr.Slider(0,100,value=0,step=1,label='候选类别自评分下限',scale=1)
+                discover=gr.Button('浏览样本',variant='primary',scale=1)
+            discovery_status=gr.Markdown()
+            with gr.Row():
+                discovery_images=gr.Gallery(label='发现样本（每组最多 12 张）',columns=4,height=None,object_fit='contain',allow_preview=False,scale=3,elem_id='discovery-gallery')
+                with gr.Column(scale=1):
+                    discovery_choice=gr.Dropdown(choices=[],label='选中样本',filterable=True)
+                    discovery_detail=gr.Markdown('选择样本查看判读依据。')
+                    discovery_open=gr.Button('打开样本与 mask',variant='primary')
+            with gr.Row():
+                discovery_previous=gr.Button('上一组',interactive=False)
+                discovery_page=gr.Number(value=1,minimum=1,precision=0,label='组号')
+                discovery_go=gr.Button('跳转')
+                discovery_next=gr.Button('下一组',interactive=False)
+                discovery_retry=gr.Button('重试影像加载')
     outputs=[map_html,table,status,state,selection,page,export_html,gallery,gallery_status,preview_panel]
     inputs=[query,verdict,year,score,sort,country,use_bounds,map_bounds,size]
     event=submit.click(search,inputs,outputs,api_name='search')
@@ -255,13 +373,29 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
     selection.change(detail,[selection,show_overlay,state],detail_outputs,api_name='detail')
     show.click(detail,[selection,show_overlay,state,object_selection],detail_outputs,api_name=False)
     show_overlay.change(detail,[selection,show_overlay,state,object_selection],detail_outputs,api_name=False)
+    review_table.select(select_review,selection,selection,api_name=False)
     object_selection.input(detail,[selection,show_overlay,state,object_selection],detail_outputs,api_name='zoom_object')
     previews.click(load_gallery,state,[gallery,gallery_status],api_name='previews')
     map_selection.input(select_map,[map_selection,selection],selection,api_name=False)
-    def category_selected(evt:gr.SelectData):return evt.row_value[0]
-    stats.select(category_selected,outputs=query,api_name=False)
-    discover.click(discovery,mode,[findings,discovery_state],api_name='discover')
-    findings.select(discovery_select,discovery_state,selection,api_name=False)
+    stat_outputs=[stats,stat_plot,stat_summary,stat_category,stats_rows,stat_detail,stat_export]
+    for trigger in [stat_apply.click,stat_keyword.submit]:trigger(refresh_stats,[stat_scope,stat_keyword,stat_sort],stat_outputs,api_name=False)
+    stat_scope.change(refresh_stats,[stat_scope,stat_keyword,stat_sort],stat_outputs,api_name=False)
+    stat_sort.change(refresh_stats,[stat_scope,stat_keyword,stat_sort],stat_outputs,api_name=False)
+    statistics_tab.select(refresh_stats,[stat_scope,stat_keyword,stat_sort],stat_outputs,api_name='global_statistics')
+    stats.select(statistic_selection,outputs=stat_category,api_name=False)
+    stat_category.change(lambda category,rows:chosen_category(category,rows,engine.manifest['image_count']),[stat_category,stats_rows],stat_detail,api_name=False)
+    navigation_outputs=outputs+[main_tabs,query,verdict,year,score,sort,country,use_bounds,size]
+    stat_open.click(open_statistic,[stat_category,stat_scope],navigation_outputs,api_name='open_category').success(load_gallery,state,[gallery,gallery_status],api_name=False)
+    discovery_outputs=[discovery_images,discovery_state,discovery_status,discovery_choice,discovery_detail,discovery_page,discovery_next,discovery_previous]
+    discover.click(lambda m,c,s:discovery(m,c,s),[mode,discovery_category,discovery_score],discovery_outputs,api_name=False).success(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name=False)
+    discovery_tab.select(discovery_tab_open,[mode,discovery_category,discovery_score,discovery_state],discovery_outputs,api_name='discover_tab').success(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name=False)
+    discovery_go.click(discovery,[mode,discovery_category,discovery_score,discovery_page],discovery_outputs,api_name='discover').success(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name=False)
+    discovery_previous.click(lambda m,c,s,p:discovery(m,c,s,max(1,p-1)),[mode,discovery_category,discovery_score,discovery_page],discovery_outputs,api_name=False).success(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name=False)
+    discovery_next.click(lambda m,c,s,p:discovery(m,c,s,p+1),[mode,discovery_category,discovery_score,discovery_page],discovery_outputs,api_name=False).success(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name=False)
+    discovery_retry.click(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name='discovery_previews')
+    discovery_images.select(choose_discovery,discovery_state,discovery_choice,api_name=False)
+    discovery_choice.change(describe_discovery,[discovery_choice,discovery_state],discovery_detail,api_name=False)
+    discovery_open.click(open_discovery,[discovery_choice,discovery_state],navigation_outputs,api_name='open_discovery').then(None,None,None,js="() => {setTimeout(() => document.querySelector('#selected-image')?.scrollIntoView({behavior:'smooth',block:'start'}),100);return [];}",api_name=False)
     def gallery_selected(current,evt:gr.SelectData):
         caption=evt.value.get('caption','') if isinstance(evt.value,dict) else ''
         for r in current.get('preview_rows',[]):
