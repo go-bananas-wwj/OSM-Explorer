@@ -5,7 +5,7 @@ import duckdb
 from bootstrap import resolve_index
 
 ROOT = Path(__file__).resolve().parent
-LABELS = {'visible':'可见','possible':'疑似','unrecognized':'未辨认'}
+LABELS = {'visible':'可见','possible':'疑似','unrecognized':'未辨认','unreviewed':'无关联判读'}
 THEMES = {
  '光伏': ['generator:source=solar','plant:source=solar','generator:method=photovoltaic','光伏','太阳能'],
  '工业设施': ['landuse=industrial','building=industrial','man_made=works','industrial='],
@@ -41,6 +41,11 @@ class Engine:
         for name in ['images','reviews']:
             path=str(self.data/(name+'.parquet')).replace("'","''")
             self.db.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet('{path}')")
+        for name in ['search_catalog','name_aliases','named_objects','name_entities']:
+            path=self.data/(name+'.parquet')
+            if path.exists():self.db.execute("CREATE VIEW "+name+" AS SELECT * FROM read_parquet('"+str(path).replace("'","''")+"')")
+        self.has_names=all((self.data/(n+'.parquet')).exists() for n in ['name_aliases','named_objects','name_entities'])
+        self._catalog=None
         self._stats_cache={}
         self.has_object_counts='osm_object_rows' in [r['name'] for r in self.rows("PRAGMA table_info('reviews')")]
         self.categories=self.rows('SELECT category,count(*) n FROM reviews GROUP BY category ORDER BY n DESC')
@@ -51,8 +56,16 @@ class Engine:
     def base(self, spec):
         if spec.get('coverage'): return 'SELECT i.*,NULL::VARCHAR category,NULL::VARCHAR verdict,NULL::INTEGER score,NULL::INTEGER candidate_id,0::BIGINT matches FROM images i',[]
         clauses=[];params=[]
+        named=spec.get('name_entity')
+        if named:
+            if not self.has_names:raise ValueError('名称索引尚未就绪')
+            clauses.append('o.entity=?');params.append(named)
         q=(spec.get('query') or '').strip();q=ALIASES.get(q.lower(),q)
-        if spec.get('exact_category'):
+        if named:pass
+        elif spec.get('exact_tag'):
+            key,value=spec['exact_tag']
+            clauses.append('(list_contains(CAST(r.tags_json AS JSON)::VARCHAR[][],[?,?]) OR list_contains(CAST(r.context_tags_json AS JSON)::VARCHAR[][],[?,?]))');params.extend([key,value,key,value])
+        elif spec.get('exact_category'):
             clauses.append('r.category=?');params.append(spec['exact_category'])
         elif q and q!='全部类别':
             terms=THEMES.get(q,[q]);conditions=[]
@@ -65,7 +78,9 @@ class Engine:
             clauses.append('('+' OR '.join(conditions)+')')
         verdict=spec.get('verdict','visible')
         if verdict!='all': clauses.append('r.verdict=?');params.append(verdict)
-        clauses.append('r.score>=?');params.append(int(spec.get('score',0)))
+        minimum=int(spec.get('score',0))
+        if not named or minimum>0:
+            clauses.append('r.score>=?');params.append(minimum)
         if spec.get('year') and str(spec['year'])!='全部年份':clauses.append('i.year=?');params.append(int(spec['year']))
         if spec.get('country'):clauses.append("contains(','||i.country||',',','||?||',')");params.append(spec['country'])
         if spec.get('bbox'):
@@ -74,6 +89,13 @@ class Engine:
             else:clauses+=['(i.lon>=? OR i.lon<=?)'];params +=[west,east]
         where=' AND '.join(clauses) or 'TRUE'
         # Each image once. Its representative is the highest-scoring matched review.
+        if named:
+            sql=f'''SELECT * EXCLUDE(rn) FROM (SELECT i.*,r.category,coalesce(r.verdict,'unreviewed') verdict,r.score,r.candidate_id,
+              count(r.candidate_id) OVER(PARTITION BY i.image_id) matches,
+              row_number() OVER(PARTITION BY i.image_id ORDER BY r.score DESC NULLS LAST,r.candidate_id ASC) rn
+              FROM named_objects o JOIN images i USING(image_id) LEFT JOIN reviews r ON r.image_id=i.image_id AND list_contains(o.candidate_ids,r.candidate_id)
+              WHERE {where}) WHERE rn=1'''
+            return sql,params
         sql=f'''SELECT * EXCLUDE (rn) FROM (
           SELECT i.*,r.category,r.verdict,r.score,r.candidate_id,
           count(*) OVER(PARTITION BY i.image_id) matches,
@@ -104,6 +126,24 @@ class Engine:
         sql,params=self.base(spec)
         return self.rows(f'''SELECT image_id,lon,lat,year,score,candidate_id,category FROM ({sql})
             WHERE lon>=? AND lon<? AND lat>=? AND lat<? ORDER BY score DESC NULLS LAST,image_id LIMIT 30''',params+[gx*step,(gx+1)*step,gy*step,(gy+1)*step])
+    def label_catalog(self):
+        if self._catalog is None:
+            if (self.data/'search_catalog.parquet').exists():self._catalog=self.rows('SELECT * FROM search_catalog')
+            else:
+                self._catalog=self.rows("SELECT 'category:'||category AS token,category AS label,'category' AS kind,count(*) AS records,count(DISTINCT image_id) AS images,count(DISTINCT CASE WHEN verdict='visible' THEN image_id END) AS visible_images FROM reviews GROUP BY category")
+        return self._catalog
+
+    def resolve_query(self,text,mode='类别与标签'):
+        from resolver import Resolver
+        return Resolver(self).resolve(text or '',mode)
+
+    def entity_aliases(self,entity):
+        return self.rows('SELECT field,value FROM name_aliases WHERE entity=? ORDER BY field,value',[entity]) if self.has_names else []
+
+    def entity_candidates(self,image_id,entity):
+        rows=self.rows('SELECT candidate_ids FROM named_objects WHERE image_id=? AND entity=?',[image_id,entity]) if self.has_names else []
+        return set(cid for row in rows for cid in row['candidate_ids'])
+
     def image(self,image_id):
         rows=self.rows('SELECT * FROM images WHERE image_id=?',[image_id])
         if not rows:raise KeyError('Unknown image')

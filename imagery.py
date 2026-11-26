@@ -139,18 +139,18 @@ def union_saved_masks(blob, indices, expected_shape, capture=None):
             position+=plane_bytes
     return union
 
-def mask_cache_path(row,tags,object_key=None):
-    key=hashlib.sha256(json.dumps([sorted(set(tuple(t) for t in tags)),object_key],ensure_ascii=False).encode()).hexdigest()[:16]
-    return CACHE/(row['image_id']+'.mask-v2-'+key+'.npz')
+def mask_cache_path(row,tags,object_key=None,entity=None):
+    key=hashlib.sha256(json.dumps([sorted(set(tuple(t) for t in tags)),object_key,entity],ensure_ascii=False).encode()).hexdigest()[:16]
+    return CACHE/(row['image_id']+'.mask-v3-'+key+'.npz')
 
 def save_mask(path,mask,objects):
     temp=path.with_suffix('.'+uuid.uuid4().hex+'.tmp')
     with temp.open('wb') as f:np.savez_compressed(f,mask=mask,objects=json.dumps(objects,ensure_ascii=False))
     temp.replace(path)
 
-def original_mask(row,tags,object_key=None):
+def original_mask(row,tags,object_key=None,entity=None):
     wanted=set(tuple(t) for t in tags)
-    path=mask_cache_path(row,tags,object_key)
+    path=mask_cache_path(row,tags,object_key,entity)
     if path.exists():
         with np.load(path,allow_pickle=False) as saved:
             return saved['mask'].astype(bool),json.loads(str(saved['objects']))
@@ -163,7 +163,7 @@ def original_mask(row,tags,object_key=None):
     if record['image_id']!=row['image_id']:raise ValueError('Mask source identity mismatch')
     matching=[]
     for obj in record['osm_annotations']:
-        if wanted.intersection(dict(obj['tags']).items()) and (object_key is None or obj['object_key']==object_key):
+        if ((f"{obj['osm_type']}/{obj['osm_id']}"==entity) if entity else bool(wanted.intersection(dict(obj['tags']).items()))) and (object_key is None or obj['object_key']==object_key):
             matching.append(dict(osm_type=obj['osm_type'],osm_id=obj['osm_id'],object_key=obj['object_key'],mask_index=obj['mask_index'],foreground_pixels=obj['foreground_pixels'],tags=dict(obj['tags'])))
     info=json.loads(row['info_json'])
     largest=max(matching,key=lambda o:o['foreground_pixels'],default=None)
@@ -171,7 +171,7 @@ def original_mask(row,tags,object_key=None):
     mask=union_saved_masks(record['masks_npz'],[o['mask_index'] for o in matching],(info['height'],info['width']),capture)
     save_mask(path,mask,matching)
     if largest and capture:
-        save_mask(mask_cache_path(row,tags,largest['object_key']),capture[largest['mask_index']],[largest])
+        save_mask(mask_cache_path(row,tags,largest['object_key'],entity),capture[largest['mask_index']],[largest])
     return mask,matching
 
 def render_mask(image,mask):
@@ -202,14 +202,14 @@ def mask_crop_box(mask):
     y=max(0,min(h-ch,(int(ys.min())+int(ys.max())+1-ch)//2))
     return (x,y,x+cw,y+ch)
 
-def mask_views(row,tags,show_mask=True,object_key=None):
+def mask_views(row,tags,show_mask=True,object_key=None,entity=None):
     image=Image.open(rgb(row)).convert('RGB')
-    union,objects=original_mask(row,tags)
+    union,objects=original_mask(row,tags,entity=entity) if entity else original_mask(row,tags)
     objects=sorted(objects,key=lambda o:(-o['foreground_pixels'],o['object_key']))
     chosen=next((o for o in objects if o['object_key']==object_key),objects[0] if objects else None)
     full=render_mask(image,union) if show_mask else image.copy()
     if chosen is None:return full,None,objects,None,None,int(union.sum())
-    mask,_=original_mask(row,tags,chosen['object_key'])
+    mask,_=original_mask(row,tags,chosen['object_key'],entity=entity) if entity else original_mask(row,tags,chosen['object_key'])
     box=mask_crop_box(mask)
     if box is None:return full,None,objects,chosen,None,int(union.sum())
     zoom=(render_mask(image,mask) if show_mask else image).crop(box)

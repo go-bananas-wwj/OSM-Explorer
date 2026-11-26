@@ -31,9 +31,31 @@
     "reviews.parquet": {
       "bytes": 14341413,
       "sha256": "a8a8b359ba6caaee5fa376915160ea79f552bd171ff7043f098b2ac264dab188"
+    },
+    "search_catalog.parquet": {
+      "bytes": 96548,
+      "sha256": "a3b534e6665362d8131c45151982639966440ef77a1495500e5b8aedd7b192a6"
+    },
+    "name_aliases.parquet": {
+      "bytes": 38585522,
+      "sha256": "7914b0a579e09c6bbb26a907c05501158c0fd15866feee09aead5c441cddfae4"
+    },
+    "named_objects.parquet": {
+      "bytes": 20142513,
+      "sha256": "11e0a5201fc54a8c704925987a5418c1fe537623891747d03ec837f2d775a9e7"
+    },
+    "name_entities.parquet": {
+      "bytes": 6411011,
+      "sha256": "b39f03c9eab14eded7bca589cab5e6bd67fdda0a697cdbbc5a288d81cdaa4956"
     }
   },
   "theme_mapping": "Same-object solar/wind qualifiers linked through reviewed power tag; original AI category and score unchanged.",
   "osm_annotation_rows": 16662527,
-  "object_count_definition": "Unique object_key occurrences within image/candidate, linked by original v2 ai_tag_reviews key/value pairs. Only osm_annotations; excludes context-only parent relations. Not individual-object AI verification."
+  "object_count_definition": "Unique object_key occurrences within image/candidate, linked by original v2 ai_tag_reviews key/value pairs. Only osm_annotations; excludes context-only parent relations. Not individual-object AI verification.",
+  "name_index": {
+    "alias_count": 2266912,
+    "entities": 1569902,
+    "occurrences": 2463072,
+    "scope": "Named spatial osm_annotations only; all stored language variants retained. Same-object reviewed tags provide optional v2 associations; names are not AI visual labels."
+  }
 }

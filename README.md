@@ -98,3 +98,15 @@ python -m pytest -q
 - 影像：Copernicus Sentinel-2 / Major-TOM，沿用源数据 CC BY-SA 4.0。运行时 RGB 预览沿用源许可。
 - AI 判读：来自用户发布的第二版数据集，保留其来源、固定版本与弱标签语义。
 - 界面布局参考 [EarthEmbeddingExplorer](https://modelscope.cn/studios/Major-TOM/EarthEmbeddingExplorer-Dense-Qwen3-VL-Embedding)。Leaflet 为 BSD-2-Clause，Natural Earth 海岸线为 public domain；详见 `NOTICE` 和 `static/LEAFLET-LICENSE`。
+
+## 多语言标签与名称检索
+
+先输入检索词并点击“查找候选”，再选择实际存在的主题、v2 类别、OSM 键值或地物对象，点击“查询并显示分布”。候选数为全库去重影像数；最终结果再应用判读、分数、年份、国家和地图范围筛选。
+
+- **类别与标签**：常用多语言词汇映射到实际索引中的类别/标签。例如 `工厂`、`factory`、`usine` 得到相同候选；`water=lake` 精确匹配原始键值。界面显示匹配依据。词汇表见 `multilingual.py`，不调用模型翻译，也不修改 v2 标签。
+- **地物名称**：搜索原始 `name`、`name:<语言>`、`official_name`、`alt_name` 等字段。可输入 `name:en=Moscow` 限定字段，或 `relation/2555133` 定位对象。按 `osm_type/osm_id` 合并各语言名称，同名不同对象分别列出。支持大小写、Unicode 全半角和拉丁字母重音归一化，保留原始名称显示。
+- 名称索引包含 **2,266,912 条名称字段、1,569,902 个有名称的 OSM 对象、2,463,072 条对象/影像关联**，来自固定 v2 版本的空间 `osm_annotations`；不包含仅供上下文的父关系。
+- 名称模式默认“全部判读”。名称是 OSM 元数据；评分只取所选对象原始标签关联的 v2 图像级类别判读，无关联时留空。查看详情时 mask 精确定位所选对象，整图与局部放大保持一致。
+- 不同语言只有在原数据记录了对应名称时才能通过该名称检索；常用类别词的跨语言匹配由显式词汇表支持。原始类别、评分、理由和数据版本保持不变。
+
+重建附加索引：`python scripts/build_search_catalog.py` 和 `python scripts/build_name_index.py`（需已下载的固定版本原始分片）。部署前运行 `python scripts/prepare_studio_index.py`，将全部索引及校验清单打包供创空间离线启动。

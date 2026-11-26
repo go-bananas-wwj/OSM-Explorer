@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from shapely import wkb
 from engine import Engine, LABELS, THEMES, ROOT, matching_tags
 from imagery import rgb, mask_views, CACHE
+from search_ui import candidate_label, candidate_plan
 from analytics import STAT_HEADERS, SCOPE, SORT, statistic_values, statistics_chart, overview, chosen_category, discovery_caption, discovery_description
 
 engine=Engine(); api=FastAPI(title='OSM Explorer')
@@ -63,8 +64,9 @@ def footprint(image_id:str):
 @api.get('/api/export/{key}')
 def export(key:str):
     spec=get_spec(key);n,rows=engine.search(spec,limit=300000)
-    buf=io.StringIO();fields=['image_id','category','verdict','score','lon','lat','year','candidate_id','matches'];writer=csv.DictWriter(buf,fieldnames=fields,extrasaction='ignore');writer.writeheader()
+    buf=io.StringIO();fields=['image_id','category','verdict','score','lon','lat','year','candidate_id','matches','matched_osm_entity','query'];writer=csv.DictWriter(buf,fieldnames=fields,extrasaction='ignore');writer.writeheader()
     for row in rows:
+        row={**row,'matched_osm_entity':spec.get('name_entity',''),'query':spec.get('query','')}
         row={k: ("'"+v if isinstance(v,str) and v.startswith(('=','+','-','@')) else v) for k,v in row.items()};writer.writerow(row)
     return Response('\ufeff'+buf.getvalue(),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="osm-explorer-results.csv"'})
 
@@ -106,20 +108,47 @@ def display_query(spec,page=1,size=50):
     choices=[(f'{(page-1)*size+i+1}. {r["image_id"]} · {r["score"] if r["score"] is not None else "—"} 分',r['image_id']+'|'+str(r['candidate_id'] or '')) for i,r in enumerate(rows)]
     status=f'共 **{count:,} 张影像**匹配 · 第 {page} / {pages} 页 · 地图展示全部匹配影像，表格每页 {size} 条。'
     if spec.get('exact_category'):status='**v2 精确类别：'+html.escape(spec['exact_category'])+'** · '+status
+    if spec.get('exact_tag'):status='**原始标签：'+html.escape('='.join(spec['exact_tag']))+'** · '+status
+    if spec.get('name_entity'):status='**OSM 对象：'+html.escape(spec['name_entity'])+'** · '+status+' 名称来自 OSM；分数仅对应此对象关联的 v2 类别判读。'
     if count==0:status+=' 没有符合条件的样本，可降低分数或选择其他判读。'
     export_html=f'<a href="/api/export/{key}" target="_blank" rel="noopener">下载全部 {count:,} 条匹配结果（CSV）</a>'
     return frame(key),table_rows(rows,(page-1)*size),status,state,gr.update(choices=choices,value=choices[0][1] if choices else None),gr.update(value=page),export_html,[],'',gr.update(visible=count>=10)
 
 def search(query,verdict,year,score,sort,country,use_bounds,bounds,size):
-    exact=query[3:] if query and query.startswith('v2:') else None
-    if exact:query=exact
-    spec={'query':query or '全部类别','verdict':{'可见':'visible','疑似':'possible','未辨认':'unrecognized','全部':'all'}[verdict],'year':year,'score':score,'sort':sort,'country':(country or '').strip().upper()}
-    if exact:spec['exact_category']=exact
+    query=query or '全部类别'
+    spec={'query':query,'verdict':{'可见':'visible','疑似':'possible','未辨认':'unrecognized','全部':'all'}[verdict],'year':year,'score':score,'sort':sort,'country':(country or '').strip().upper()}
+    if query.startswith(('v2:','category:')):
+        spec['exact_category']=query.split(':',1)[1];spec['query']=spec['exact_category']
+    elif query.startswith('tag:'):
+        spec['exact_tag']=query[4:].split('=',1);spec['query']=query[4:]
+    elif query.startswith('name:'):spec['name_entity']=query[5:]
+    elif query.startswith('theme:'):spec['query']=query[6:]
     if use_bounds:
         try:
             b=json.loads(bounds)['bounds'];w,e=b['west'],b['east'];spec['bbox']=[-180 if e-w>=359.9 else (w+180)%360-180,max(-90,b['south']),180 if e-w>=359.9 else (e+180)%360-180,min(90,b['north'])]
         except Exception:raise gr.Error('地图范围尚未就绪，请稍后重试')
     return display_query(spec,size=size)
+
+@api.get('/api/resolve')
+def resolve_api(q:str='',mode:str='类别与标签'):
+    if len(q)>200:raise HTTPException(400,'检索词请保持在 200 字以内')
+    return engine.resolve_query(q,mode)
+
+def resolve_input(text,mode):
+    items=resolve_api(text,mode);selected=items[0]['token'] if items else None
+    return gr.update(choices=[(candidate_label(r),r['token']) for r in items],value=selected),{'text':text,'mode':mode,'items':items},candidate_plan(items[0],engine) if items else '没有找到候选。请换一个标签词、原始 key=value 或已记录的地物名称。',gr.update(interactive=bool(items))
+
+def plan_selection(token,resolution):
+    row=next((r for r in (resolution or {}).get('items',[]) if r['token']==token),None)
+    return candidate_plan(row,engine)
+
+def apply_candidate(token,resolution,text,mode,*filters):
+    if not resolution or resolution.get('text')!=text or resolution.get('mode')!=mode or token not in [r['token'] for r in resolution.get('items',[])]:
+        raise gr.Error('请先查找候选并选择要筛选的标签或对象')
+    return search(token,*filters)
+
+def clear_candidates():
+    return gr.update(choices=[],value=None),{},'检索词已修改，请重新查找候选。',gr.update(interactive=False)
 
 def paginate(page,state,size):
     if not state:raise gr.Error('请先查询')
@@ -141,7 +170,11 @@ def detail(selection,show_overlay,current=None,object_key=None):
     bits=selection.split('|');image_id=bits[0];cid=int(bits[1]) if len(bits)>1 and bits[1].isdigit() else None
     try:row=engine.image(image_id)
     except KeyError:raise gr.Error('样本不存在')
-    reviews=engine.reviews(image_id);chosen=next((r for r in reviews if r['candidate_id']==cid),reviews[0] if reviews else None)
+    entity=(current or {}).get('spec',{}).get('name_entity')
+    reviews=engine.reviews(image_id)
+    if entity:
+        allowed=engine.entity_candidates(image_id,entity);reviews=[r for r in reviews if r['candidate_id'] in allowed]
+    chosen=next((r for r in reviews if r['candidate_id']==cid),reviews[0] if reviews else None)
     info=f'**影像** `{image_id}` · 拍摄时间 {row["capture_time"]} · 经纬度 {row["lon"]:.5f}, {row["lat"]:.5f}\n\n'
     tags=json.loads(chosen['tags_json']) if chosen else []
     context_tags=json.loads(chosen.get('context_tags_json') or '[]') if chosen else []
@@ -155,10 +188,15 @@ def detail(selection,show_overlay,current=None,object_key=None):
     if chosen:
         info+=f'**AI 判读类别：{html.escape(chosen["category"])}** · {LABELS.get(chosen["verdict"],chosen["verdict"])} · 自评分 **{chosen["score"]}**\n\n'
         info+=f'证据方位：{html.escape(chosen["location"] or "—")}\n\n判读理由：{html.escape(chosen["explanation"] or "—")}\n\n别解：{html.escape(chosen["alternative"] or "无")}'
-    else:info+='此影像没有 AI 类别判读，处理状态：'+row['status']
+    else:info+=('此对象没有关联的 v2 类别判读，评分留空。' if entity else '此影像没有 AI 类别判读，处理状态：'+row['status'])
+    if (current or {}).get('spec',{}).get('exact_tag'):tags=[current['spec']['exact_tag']]
+    if entity:
+        aliases=engine.entity_aliases(entity)
+        info+='\n\n**OSM 对象** `'+html.escape(entity)+'`；名称为原始元数据。'
+        tags=[[r['field'],r['value']] for r in aliases]
     picture=None;zoom=None;choices=[];chosen_object=None;zoom_info=''
     try:
-        picture,zoom,objects,chosen_object,box,pixels=mask_views(row,tags,show_overlay,object_key)
+        picture,zoom,objects,chosen_object,box,pixels=mask_views(row,tags,show_overlay,object_key,**({"entity":entity} if entity else {}))
         choices=[(f"{o['osm_type']}/{o['osm_id']} · {o['foreground_pixels']:,} 像元",o['object_key']) for o in objects]
         info+=f'\n\n匹配 {len(objects)} 个原始 OSM 对象，mask 合计 {pixels:,} 像元（{100*pixels/(picture.width*picture.height):.2f}%）。'
         if box:
@@ -170,6 +208,7 @@ def detail(selection,show_overlay,current=None,object_key=None):
         info+='\n\n原始 mask 暂未加载，请点击“查看影像与标签”重试。';print('detail failed',image_id,type(exc).__name__,flush=True)
     review_table=[[r['category'],LABELS.get(r['verdict'],r['verdict']),r['score'],r['location'],r['explanation'],r['alternative']] for r in reviews]
     meta={'image_id':image_id,'capture_time':row['capture_time'],'latitude':row['lat'],'longitude':row['lon'],'source':json.loads(row['source_json']),'annotation_shard':row['shard'],'dataset_revision':engine.manifest['revision']}
+    if entity:meta['matched_osm_entity']=entity
     return picture,info,tags,review_table,meta,zoom,gr.update(choices=choices,value=chosen_object['object_key'] if chosen_object else None),zoom_info
 
 def select_table(state,evt:gr.SelectData):
@@ -279,8 +318,15 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
         with gr.Tab('标签检索',id='explore'):
             with gr.Row(elem_id='search-layout'):
                 with gr.Column(scale=4,min_width=280):
-                    query=gr.Dropdown([('主题 · '+t,t) for t in THEMES]+['全部类别']+[('v2 · '+r['category'],'v2:'+r['category']) for r in engine.categories],value='光伏',allow_custom_value=True,filterable=True,label='检索主题 / v2 类别 / OSM 键值',elem_id='query-control')
-                    gr.Examples([['光伏'],['工业设施'],['农田'],['水域']],inputs=query,label='常用类别')
+                    search_mode=gr.Radio(['类别与标签','地物名称'],value='类别与标签',label='检索内容')
+                    query=gr.Textbox(value='光伏',label='输入标签或名称',placeholder='光伏 / solar panels / usine / name:en=Moscow',elem_id='query-control')
+                    resolve_button=gr.Button('查找候选')
+                    initial=engine.resolve_query('光伏')
+                    resolution=gr.State({'text':'光伏','mode':'类别与标签','items':initial})
+                    candidate=gr.Dropdown([(candidate_label(r),r['token']) for r in initial],value=initial[0]['token'],label='选择实际匹配项（全库影像数）',elem_id='candidate-control')
+                    with gr.Accordion('匹配依据与名称说明',open=False):
+                        plan=gr.Markdown(candidate_plan(initial[0],engine))
+                    gr.Markdown('支持常用多语言类别词；地物名称搜索 OSM 已记录的各语言名称。')
                     verdict=gr.Radio(['可见','疑似','未辨认','全部'],value='可见',label='AI 判读结果')
                     year=gr.Dropdown(['全部年份']+[str(y) for y in engine.manifest['years']],value='全部年份',label='拍摄年份')
                     score=gr.Slider(0,100,value=0,step=1,label='自评分下限')
@@ -312,7 +358,7 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
                     info=gr.Markdown('选择结果行、地图样本或下拉框中的影像。',elem_id='sample-detail')
                     with gr.Tabs():
                         with gr.Tab('匹配的 OSM 标签'):tag_table=gr.Dataframe(headers=['键','值'],interactive=False)
-                        with gr.Tab('整图全部判读'):review_table=gr.Dataframe(headers=['类别','判读','自评分','证据方位','理由','别解'],interactive=False,wrap=True)
+                        with gr.Tab('相关类别判读'):review_table=gr.Dataframe(headers=['类别','判读','自评分','证据方位','理由','别解'],interactive=False,wrap=True)
                         with gr.Tab('影像来源'):metadata=gr.JSON()
             with gr.Group(visible=False,elem_id='top-ten-preview') as preview_panel:
                 with gr.Row():
@@ -362,7 +408,14 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
                 discovery_retry=gr.Button('重试影像加载')
     outputs=[map_html,table,status,state,selection,page,export_html,gallery,gallery_status,preview_panel]
     inputs=[query,verdict,year,score,sort,country,use_bounds,map_bounds,size]
-    event=submit.click(search,inputs,outputs,api_name='search')
+    resolution_outputs=[candidate,resolution,plan,submit]
+    resolve_button.click(resolve_input,[query,search_mode],resolution_outputs,api_name='resolve_candidates')
+    query.submit(resolve_input,[query,search_mode],resolution_outputs,api_name=False)
+    query.input(clear_candidates,outputs=resolution_outputs,api_name=False)
+    search_mode.input(clear_candidates,outputs=resolution_outputs,api_name=False).then(lambda m:('全部' if m=='地物名称' else '可见',0),search_mode,[verdict,score],api_name=False)
+    candidate.change(plan_selection,[candidate,resolution],plan,api_name=False)
+    event=submit.click(apply_candidate,[candidate,resolution,query,search_mode]+inputs[1:],outputs,api_name='apply_candidate')
+    gr.Button(visible=False).click(search,inputs,outputs,api_name='search')
     event.success(load_gallery,state,[gallery,gallery_status],api_name=False)
     go.click(paginate,[page,state,size],outputs,api_name='page').success(load_gallery,state,[gallery,gallery_status],api_name=False)
     previous.click(lambda p,s,z:paginate(max(1,p-1),s,z),[page,state,size],outputs,api_name=False).success(load_gallery,state,[gallery,gallery_status],api_name=False)
@@ -385,7 +438,7 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
     stats.select(statistic_selection,outputs=stat_category,api_name=False)
     stat_category.change(lambda category,rows:chosen_category(category,rows,engine.manifest['image_count']),[stat_category,stats_rows],stat_detail,api_name=False)
     navigation_outputs=outputs+[main_tabs,query,verdict,year,score,sort,country,use_bounds,size]
-    stat_open.click(open_statistic,[stat_category,stat_scope],navigation_outputs,api_name='open_category').success(load_gallery,state,[gallery,gallery_status],api_name=False)
+    stat_open.click(open_statistic,[stat_category,stat_scope],navigation_outputs,api_name='open_category').then(lambda: '类别与标签',outputs=search_mode,api_name=False).then(resolve_input,[query,search_mode],resolution_outputs,api_name=False).success(load_gallery,state,[gallery,gallery_status],api_name=False)
     discovery_outputs=[discovery_images,discovery_state,discovery_status,discovery_choice,discovery_detail,discovery_page,discovery_next,discovery_previous]
     discover.click(lambda m,c,s:discovery(m,c,s),[mode,discovery_category,discovery_score],discovery_outputs,api_name=False).success(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name=False)
     discovery_tab.select(discovery_tab_open,[mode,discovery_category,discovery_score,discovery_state],discovery_outputs,api_name='discover_tab').success(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name=False)
@@ -395,7 +448,7 @@ with gr.Blocks(title='OSM Explorer · OSM 标签与卫星影像探索',theme=gr.
     discovery_retry.click(discovery_gallery,discovery_state,[discovery_images,discovery_status],api_name='discovery_previews')
     discovery_images.select(choose_discovery,discovery_state,discovery_choice,api_name=False)
     discovery_choice.change(describe_discovery,[discovery_choice,discovery_state],discovery_detail,api_name=False)
-    discovery_open.click(open_discovery,[discovery_choice,discovery_state],navigation_outputs,api_name='open_discovery').then(None,None,None,js="() => {setTimeout(() => document.querySelector('#selected-image')?.scrollIntoView({behavior:'smooth',block:'start'}),100);return [];}",api_name=False)
+    discovery_open.click(open_discovery,[discovery_choice,discovery_state],navigation_outputs,api_name='open_discovery').then(lambda: '类别与标签',outputs=search_mode,api_name=False).then(resolve_input,[query,search_mode],resolution_outputs,api_name=False).then(None,None,None,js="() => {setTimeout(() => document.querySelector('#selected-image')?.scrollIntoView({behavior:'smooth',block:'start'}),100);return [];}",api_name=False)
     def gallery_selected(current,evt:gr.SelectData):
         caption=evt.value.get('caption','') if isinstance(evt.value,dict) else ''
         for r in current.get('preview_rows',[]):
