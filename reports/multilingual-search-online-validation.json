@@ -1,0 +1,434 @@
+{
+  "passed": true,
+  "verified_at": "2026-11-26T09:12:53Z",
+  "checks": [
+    "multilingual category equivalence",
+    "exact tag filter 4150 lake images",
+    "same-object multilingual names deduplicated",
+    "named entity full and zoom mask",
+    "original multilingual name fields"
+  ],
+  "candidates": {
+    "工厂": [
+      {
+        "token": "theme:工业设施",
+        "images": 5203,
+        "visible_images": 4089
+      },
+      {
+        "token": "tag:landuse=industrial",
+        "images": 4456,
+        "visible_images": 3585
+      },
+      {
+        "token": "tag:building=industrial",
+        "images": 1875,
+        "visible_images": 1561
+      },
+      {
+        "token": "tag:man_made=works",
+        "images": 695,
+        "visible_images": 160
+      }
+    ],
+    "factory": [
+      {
+        "token": "theme:工业设施",
+        "images": 5203,
+        "visible_images": 4089
+      },
+      {
+        "token": "tag:landuse=industrial",
+        "images": 4456,
+        "visible_images": 3585
+      },
+      {
+        "token": "tag:building=industrial",
+        "images": 1875,
+        "visible_images": 1561
+      },
+      {
+        "token": "tag:man_made=works",
+        "images": 695,
+        "visible_images": 160
+      }
+    ],
+    "usine": [
+      {
+        "token": "theme:工业设施",
+        "images": 5203,
+        "visible_images": 4089
+      },
+      {
+        "token": "tag:landuse=industrial",
+        "images": 4456,
+        "visible_images": 3585
+      },
+      {
+        "token": "tag:building=industrial",
+        "images": 1875,
+        "visible_images": 1561
+      },
+      {
+        "token": "tag:man_made=works",
+        "images": 695,
+        "visible_images": 160
+      }
+    ],
+    "solar panels": [
+      {
+        "token": "theme:光伏",
+        "images": 699,
+        "visible_images": 25
+      },
+      {
+        "token": "tag:generator:source=solar",
+        "images": 601,
+        "visible_images": 9
+      },
+      {
+        "token": "tag:plant:source=solar",
+        "images": 213,
+        "visible_images": 19
+      },
+      {
+        "token": "tag:generator:method=photovoltaic",
+        "images": 554,
+        "visible_images": 7
+      }
+    ],
+    "太陽光パネル": [
+      {
+        "token": "theme:光伏",
+        "images": 699,
+        "visible_images": 25
+      },
+      {
+        "token": "tag:generator:source=solar",
+        "images": 601,
+        "visible_images": 9
+      },
+      {
+        "token": "tag:plant:source=solar",
+        "images": 213,
+        "visible_images": 19
+      },
+      {
+        "token": "tag:generator:method=photovoltaic",
+        "images": 554,
+        "visible_images": 7
+      }
+    ],
+    "water=lake": [
+      {
+        "token": "tag:water=lake",
+        "images": 5820,
+        "visible_images": 4150
+      }
+    ],
+    "Moscow": [
+      {
+        "token": "name:relation/2555133",
+        "images": 2,
+        "visible_images": 1
+      },
+      {
+        "token": "name:relation/102269",
+        "images": 4,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/238375",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/117107135",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/156265248",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/38771070",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/38828854",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/397973370",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/448735913",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/55552249",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/686646589",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:relation/3563652",
+        "images": 3747,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/2369946",
+        "images": 58,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/51490",
+        "images": 56,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/10164229",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/10377512",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/1415715",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/2091720",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/2753136",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/117106243",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/119561030",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/119561031",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/119561032",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/24501426",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/29569957",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/486524003",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/51723647",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/302862362",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/302869664",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945846",
+        "images": 1,
+        "visible_images": 1
+      }
+    ],
+    "Москва": [
+      {
+        "token": "name:relation/2555133",
+        "images": 2,
+        "visible_images": 1
+      },
+      {
+        "token": "name:node/4208854755",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:relation/1257933",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:relation/1257965",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/259536582",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/32635328",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/36742355",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:relation/102269",
+        "images": 4,
+        "visible_images": 0
+      },
+      {
+        "token": "name:node/141057897",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:node/317658016",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/350108136",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:way/51731517",
+        "images": 1,
+        "visible_images": 0
+      },
+      {
+        "token": "name:node/4033275616",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/111489846",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/302862362",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/302869664",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945846",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945847",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945848",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945849",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945850",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945851",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945852",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/317945853",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/343010749",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:way/343010750",
+        "images": 1,
+        "visible_images": 1
+      },
+      {
+        "token": "name:relation/3563652",
+        "images": 3747,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/2369946",
+        "images": 58,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/51490",
+        "images": 56,
+        "visible_images": 0
+      },
+      {
+        "token": "name:relation/2444078",
+        "images": 1,
+        "visible_images": 0
+      }
+    ]
+  }
+}
